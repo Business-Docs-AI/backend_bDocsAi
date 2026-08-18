@@ -1,4 +1,4 @@
-package br.com.example.senac.businessDocsAi.controller;
+package br.com.example.senac.businessDocsAi.categories.controller;
 
 import br.com.example.senac.businessDocsAi.dto.CategoriaRequestDTO;
 import br.com.example.senac.businessDocsAi.dto.CategoriaResponseDTO;
