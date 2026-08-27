@@ -1,4 +1,4 @@
-package br.com.example.senac.businessDocsAi.service;
+package br.com.example.senac.businessDocsAi.categories.service;
 
 import br.com.example.senac.businessDocsAi.entity.Document;
 import br.com.example.senac.businessDocsAi.entity.File;

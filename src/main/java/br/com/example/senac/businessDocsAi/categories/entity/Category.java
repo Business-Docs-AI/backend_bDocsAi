@@ -1,4 +1,4 @@
-package br.com.example.senac.businessDocsAi.entity;
+package br.com.example.senac.businessDocsAi.categories.entity;
 
 import jakarta.persistence.*;
 

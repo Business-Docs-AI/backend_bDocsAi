@@ -1,4 +1,4 @@
-package br.com.example.senac.businessDocsAi.dto;
+package br.com.example.senac.businessDocsAi.categories.dto;
 
 public record CategoryRequestDTO(
         String name,

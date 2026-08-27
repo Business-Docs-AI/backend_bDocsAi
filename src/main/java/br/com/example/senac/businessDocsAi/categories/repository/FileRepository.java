@@ -1,4 +1,4 @@
-package br.com.example.senac.businessDocsAi.repository;
+package br.com.example.senac.businessDocsAi.categories.repository;
 
 import br.com.example.senac.businessDocsAi.entity.File;
 import org.springframework.data.jpa.repository.JpaRepository;
