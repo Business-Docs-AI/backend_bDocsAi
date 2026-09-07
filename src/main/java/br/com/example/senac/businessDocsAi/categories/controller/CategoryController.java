@@ -1,8 +1,8 @@
 package br.com.example.senac.businessDocsAi.categories.controller;
 
-import br.com.example.senac.businessDocsAi.categories.controller.dto.CategoryRequestDTO;
-import br.com.example.senac.businessDocsAi.categories.controller.dto.CategoryResponseDTO;
-import br.com.example.senac.businessDocsAi.categories.controller.service.CategoryService;
+import br.com.example.senac.businessDocsAi.categories.dto.CategoryRequestDTO;
+import br.com.example.senac.businessDocsAi.categories.dto.CategoryResponseDTO;
+import br.com.example.senac.businessDocsAi.categories.service.CategoryService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
