@@ -2,6 +2,7 @@ package br.com.example.senac.businessDocsAi.documentation.controller;
 
 import br.com.example.senac.businessDocsAi.documentation.dto.DocumentationDTO;
 import br.com.example.senac.businessDocsAi.documentation.service.DocumentationService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,7 +21,7 @@ public class DocumentationController {
     // CREATE
     @PostMapping
     public ResponseEntity<DocumentationDTO> create(
-            @RequestBody DocumentationDTO dto) {
+            @Valid @RequestBody DocumentationDTO dto) {
 
         DocumentationDTO documentation =
                 documentationService.save(dto);
@@ -58,7 +59,7 @@ public class DocumentationController {
     @PutMapping("/{id}")
     public ResponseEntity<DocumentationDTO> update(
             @PathVariable Long id,
-            @RequestBody DocumentationDTO dto) {
+            @Valid @RequestBody DocumentationDTO dto) {
 
         DocumentationDTO documentation =
                 documentationService.update(id, dto);
