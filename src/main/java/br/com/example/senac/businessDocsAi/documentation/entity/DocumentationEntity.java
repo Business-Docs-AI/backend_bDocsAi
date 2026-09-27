@@ -1,5 +1,6 @@
 package br.com.example.senac.businessDocsAi.documentation.entity;
 
+import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -12,7 +13,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Entity
 @Table(name = "documentation")
-public class Documentation {
+public class DocumentationEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -25,7 +26,7 @@ public class Documentation {
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "categoria_id", nullable = false)
-    private br.com.example.senac.businessDocsAi.entity.Categoria category;
+    private CategoryEntity categoryEntity;
 
     private String createdBy;
 

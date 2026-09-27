@@ -1,8 +1,10 @@
 package br.com.example.senac.businessDocsAi.user.service;
 
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
+import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.user.dto.UserDTO;
 import br.com.example.senac.businessDocsAi.user.entity.UserEntity;
-import br.com.example.senac.businessDocsAi.user.repository.UserRepository;
+import br.com.example.senac.businessDocsAi.user.repository.IUserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -14,17 +16,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UserService {
 
-    private final UserRepository userRepository;
+    private final IUserRepository IUserRepository;
 
 
     //Aqui é usado para criar um novo usuário
-    public UserDTO create(UserDTO userDTO) {
+    public UserDTO create(UserDTO userDTO) throws BadRequestException {
 
-        if (userRepository.existsByEmail(userDTO.getEmail())) {
-            throw new RuntimeException(
-                    "Já existe um usuário cadastrado com este email: "
-                            + userDTO.getEmail()
-            );
+        if (IUserRepository.existsByEmail(userDTO.getEmail())) {
+            throw new BadRequestException("Já existe um usuário cadastrado com este email: " + userDTO.getEmail());
         }
 
         UserEntity user = new UserEntity();
@@ -38,62 +37,46 @@ public class UserService {
 
         user.setActive(true);
 
-        UserEntity savedUser = userRepository.save(user);
+        UserEntity savedUser = IUserRepository.save(user);
 
         return convertToDTO(savedUser);
     }
 
     //Traz todos os usuários
-    public List<UserDTO> findAll() {
+    public List<UserDTO> findAll() throws BadRequestException {
 
-        return userRepository.findAll()
+        return IUserRepository.findAll()
                 .stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
     //Usado para buscar usuário pelo id
-    public UserDTO findById(Long id) {
+    public UserDTO findById(Long id) throws NotFoundException {
 
-        UserEntity user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Usuário não encontrado com o ID: " + id
-                        )
-                );
+        UserEntity user = IUserRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado com o ID: " + id));
 
         return convertToDTO(user);
     }
 
     //Usado para buscar usuário pelo email
-    public UserDTO findByEmail(String email) {
+    public UserDTO findByEmail(String email) throws NotFoundException {
 
-        UserEntity user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Usuário não encontrado com o email: " + email
-                        )
-                );
+        UserEntity user = IUserRepository.findByEmail(email)
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado com o email: " + email));
 
         return convertToDTO(user);
     }
 
     //Atualiza o cadastro
-    public UserDTO update(Long id, UserDTO userDTO) {
+    public UserDTO update(Long id, UserDTO userDTO) throws BadRequestException {
 
-        UserEntity user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Usuário não foi encontrado com este ID: " + id
-                        )
-                );
+        UserEntity user = IUserRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Usuário não foi encontrado com este ID: " + id));
 
-        if (!user.getEmail().equals(userDTO.getEmail())
-                && userRepository.existsByEmail(userDTO.getEmail())) {
-
-            throw new RuntimeException(
-                    "Já existe um usuário cadastrado com este email: " + userDTO.getEmail()
-            );
+        if (!user.getEmail().equals(userDTO.getEmail()) && IUserRepository.existsByEmail(userDTO.getEmail())) {
+            throw new BadRequestException("Já existe um usuário cadastrado com este email: " + userDTO.getEmail());
         }
 
         user.setName(userDTO.getName());
@@ -102,62 +85,50 @@ public class UserService {
 
         user.setUpdateAt(LocalDateTime.now());
 
-        UserEntity updatedUser = userRepository.save(user);
+        UserEntity updatedUser = IUserRepository.save(user);
 
         return convertToDTO(updatedUser);
     }
 
     //Deletar um cadastro
-    public void delete(Long id) {
+    public void delete(Long id) throws NotFoundException {
 
-        UserEntity user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Usuário não encontrado com o ID: " + id
-                        )
-                );
+        UserEntity user = IUserRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado com o ID: " + id));
 
-        userRepository.delete(user);
+        IUserRepository.delete(user);
     }
 
     //Ativar o cadastro
-    public UserDTO activate(Long id) {
+    public UserDTO activate(Long id) throws NotFoundException {
 
-        UserEntity user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Usuário não encontrado com o ID: " + id
-                        )
-                );
+        UserEntity user = IUserRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado com o ID: " + id));
 
         user.setActive(true);
         user.setUpdateAt(LocalDateTime.now());
 
-        UserEntity updatedUser = userRepository.save(user);
+        UserEntity updatedUser = IUserRepository.save(user);
 
         return convertToDTO(updatedUser);
     }
 
     //Desativar o cadastro
-    public UserDTO deactivate(Long id) {
+    public UserDTO deactivate(Long id) throws NotFoundException {
 
-        UserEntity user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Usuário não encontrado com o ID: " + id
-                        )
-                );
+        UserEntity user = IUserRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Usuário não encontrado com o ID: " + id));
 
         user.setActive(false);
         user.setUpdateAt(LocalDateTime.now());
 
-        UserEntity updatedUser = userRepository.save(user);
+        UserEntity updatedUser = IUserRepository.save(user);
 
         return convertToDTO(updatedUser);
     }
 
     //Converte de entity para DTO
-    private UserDTO convertToDTO(UserEntity user) {
+    private UserDTO convertToDTO(UserEntity user) throws BadRequestException {
 
         return UserDTO.builder()
                 .id(user.getId())

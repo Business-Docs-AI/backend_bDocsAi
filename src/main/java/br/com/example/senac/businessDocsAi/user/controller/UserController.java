@@ -2,6 +2,7 @@ package br.com.example.senac.businessDocsAi.user.controller;
 
 import br.com.example.senac.businessDocsAi.user.dto.UserDTO;
 import br.com.example.senac.businessDocsAi.user.service.UserService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,7 +20,7 @@ public class UserController {
 
     @PostMapping
     public ResponseEntity<UserDTO> create(
-            @RequestBody UserDTO userDTO
+            @Valid @RequestBody UserDTO userDTO
     ) {
 
         return ResponseEntity
@@ -62,7 +63,7 @@ public class UserController {
     @PutMapping("/{id}")
     public ResponseEntity<UserDTO> update(
             @PathVariable Long id,
-            @RequestBody UserDTO userDTO
+            @Valid @RequestBody UserDTO userDTO
     ) {
 
         return ResponseEntity.ok(

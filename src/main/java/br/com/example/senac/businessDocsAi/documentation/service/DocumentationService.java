@@ -1,10 +1,12 @@
 package br.com.example.senac.businessDocsAi.documentation.service;
 
 import br.com.example.senac.businessDocsAi.documentation.dto.DocumentationDTO;
-import br.com.example.senac.businessDocsAi.documentation.entity.Documentation;
-import br.com.example.senac.businessDocsAi.documentation.repository.DocumentationRepository;
-import br.com.example.senac.businessDocsAi.category.entity.Category;
-import br.com.example.senac.businessDocsAi.category.repository.CategoryRepository;
+import br.com.example.senac.businessDocsAi.documentation.entity.DocumentationEntity;
+import br.com.example.senac.businessDocsAi.documentation.repository.IDocumentationRepository;
+import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
+import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
+import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -14,28 +16,26 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DocumentationService {
 
-    private final DocumentationRepository documentationRepository;
-    private final CategoryRepository categoryRepository;
+    private final IDocumentationRepository IDocumentationRepository;
+    private final ICategoryRepository ICategoryRepository;
 
-
-    // CREATE
     public DocumentationDTO save(DocumentationDTO dto) {
 
-        Category category = categoryRepository
+        CategoryEntity categoryEntity = ICategoryRepository
                 .findById(dto.categoryId())
                 .orElseThrow(() ->
-                        new RuntimeException("Categoria não encontrada"));
+                        new BadRequestException("Categoria não encontrada com o ID: " + dto.categoryId()));
 
-        Documentation documentation = new Documentation();
+        DocumentationEntity documentationEntity = new DocumentationEntity();
 
-        documentation.setTitle(dto.title());
-        documentation.setContent(dto.content());
-        documentation.setCategory(category);
-        documentation.setCreatedBy(dto.createdBy());
+        documentationEntity.setTitle(dto.title());
+        documentationEntity.setContent(dto.content());
+        documentationEntity.setCategoryEntity(categoryEntity);
+        documentationEntity.setCreatedBy(dto.createdBy());
 
 
-        Documentation saved =
-                documentationRepository.save(documentation);
+        DocumentationEntity saved =
+                IDocumentationRepository.save(documentationEntity);
 
         return convertToDTO(saved);
     }
@@ -44,21 +44,21 @@ public class DocumentationService {
     // FIND BY ID
     public DocumentationDTO findById(Long id) {
 
-        Documentation documentation =
-                documentationRepository.findById(id)
+        DocumentationEntity documentationEntity =
+                IDocumentationRepository.findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Documentação não encontrada"
+                                new NotFoundException(
+                                        "Documentação não encontrada com o ID: " + id
                                 ));
 
-        return convertToDTO(documentation);
+        return convertToDTO(documentationEntity);
     }
 
 
     // FIND ALL
     public List<DocumentationDTO> findAll() {
 
-        return documentationRepository.findAll()
+        return IDocumentationRepository.findAll()
                 .stream()
                 .map(this::convertToDTO)
                 .toList();
@@ -68,29 +68,29 @@ public class DocumentationService {
     // UPDATE
     public DocumentationDTO update(Long id, DocumentationDTO dto) {
 
-        Documentation documentation =
-                documentationRepository.findById(id)
+        DocumentationEntity documentationEntity =
+                IDocumentationRepository.findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Documentação não encontrada"
+                                new NotFoundException(
+                                        "Documentação não encontrada com o ID: " + id
                                 ));
 
 
-        Category category =
-                categoryRepository.findById(dto.categoryId())
+        CategoryEntity categoryEntity =
+                ICategoryRepository.findById(dto.categoryId())
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Categoria não encontrada"
+                                new BadRequestException(
+                                        "Categoria não encontrada com o ID: " + dto.categoryId()
                                 ));
 
 
-        documentation.setTitle(dto.title());
-        documentation.setContent(dto.content());
-        documentation.setCategory(category);
+        documentationEntity.setTitle(dto.title());
+        documentationEntity.setContent(dto.content());
+        documentationEntity.setCategoryEntity(categoryEntity);
 
 
-        Documentation updated =
-                documentationRepository.save(documentation);
+        DocumentationEntity updated =
+                IDocumentationRepository.save(documentationEntity);
 
         return convertToDTO(updated);
     }
@@ -99,28 +99,28 @@ public class DocumentationService {
     // DELETE
     public void deleteById(Long id) {
 
-        if (!documentationRepository.existsById(id)) {
-            throw new RuntimeException(
-                    "Documentação não encontrada"
+        if (!IDocumentationRepository.existsById(id)) {
+            throw new NotFoundException(
+                    "Documentação não encontrada com o ID: " + id
             );
         }
 
-        documentationRepository.deleteById(id);
+        IDocumentationRepository.deleteById(id);
     }
 
 
     // CONVERTER ENTITY → DTO
     private DocumentationDTO convertToDTO(
-            Documentation documentation) {
+            DocumentationEntity documentationEntity) {
 
         return DocumentationDTO.builder()
-                .id(documentation.getId())
-                .title(documentation.getTitle())
-                .content(documentation.getContent())
+                .id(documentationEntity.getId())
+                .title(documentationEntity.getTitle())
+                .content(documentationEntity.getContent())
                 .categoryId(
-                        documentation.getCategory().getId()
+                        documentationEntity.getCategoryEntity().getId()
                 )
-                .createdBy(documentation.getCreatedBy())
+                .createdBy(documentationEntity.getCreatedBy())
                 .build();
     }
 }
