@@ -6,6 +6,7 @@ import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
 import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
 import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -14,15 +15,18 @@ import java.util.List;
 public class CategoryService {
 
     private final ICategoryRepository repository;
+    private final CategoriaAccessService categoriaAccessService;
 
-    public CategoryService(ICategoryRepository repository) {
+    public CategoryService(ICategoryRepository repository, CategoriaAccessService categoriaAccessService) {
         this.repository = repository;
+        this.categoriaAccessService = categoriaAccessService;
     }
 
-    // List categories
-    public List<CategoryResponseDTO> list()  throws NotFoundException {
+    // List apenas as categorias que o usuário atual pode acessar (ADMIN vê todas).
+    public List<CategoryResponseDTO> list() throws NotFoundException {
         return repository.findAll()
                 .stream()
+                .filter(categoryEntity -> categoriaAccessService.podeAcessarCategoria(categoryEntity.getId()))
                 .map(categoryEntity -> new CategoryResponseDTO(
                         categoryEntity.getId(),
                         categoryEntity.getName(),
@@ -36,6 +40,8 @@ public class CategoryService {
         CategoryEntity categoryEntity = repository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Categoria não encontrada com o ID: " + id));
 
+        categoriaAccessService.validarAcessoCategoria(id);
+
         return new CategoryResponseDTO(
                 categoryEntity.getId(),
                 categoryEntity.getName(),
@@ -44,6 +50,7 @@ public class CategoryService {
     }
 
     // Save new category
+    @PreAuthorize("hasRole('ADMIN')")
     public CategoryResponseDTO save(CategoryRequestDTO dto) throws BadRequestException {
 
         CategoryEntity categoryEntity = new CategoryEntity();
@@ -60,6 +67,7 @@ public class CategoryService {
     }
 
     // Update category
+    @PreAuthorize("hasRole('ADMIN')")
     public CategoryResponseDTO update(Long id, CategoryRequestDTO dto) throws NotFoundException {
         CategoryEntity categoryEntity = repository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Categoria não encontrada com o ID: " + id));
@@ -77,6 +85,7 @@ public class CategoryService {
     }
 
     // Delete category
+    @PreAuthorize("hasRole('ADMIN')")
     public void delete(Long id) throws NotFoundException {
 
         if (!repository.existsById(id)) {
