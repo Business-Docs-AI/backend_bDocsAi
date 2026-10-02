@@ -9,7 +9,12 @@ import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.input.PromptTemplate;
+import dev.langchain4j.rag.DefaultRetrievalAugmentor;
+import dev.langchain4j.rag.RetrievalAugmentor;
 import dev.langchain4j.rag.content.Content;
+import dev.langchain4j.rag.content.injector.ContentInjector;
+import dev.langchain4j.rag.content.injector.DefaultContentInjector;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
@@ -28,7 +33,12 @@ public class RagAssistantConfig {
     // resultados pode ser descartada pelo filtro de categoria logo abaixo.
     private static final int MAX_TRECHOS_BRUTOS = 15;
     private static final int MAX_TRECHOS_RECUPERADOS = 5;
-    private static final double SCORE_MINIMO_RECUPERACAO = 0.6;
+    // 0.6 deixava passar trechos só vagamente parecidos (vocabulário/estrutura de texto
+    // empresarial em comum, sem relação de assunto de verdade) — confirmado na prática: um
+    // texto sobre emissão de nota fiscal no ERP recuperou trechos de política de férias e de
+    // senhas. Resultado: o modelo, instruído a "responder usando" esses trechos, travava
+    // pedindo pro usuário esclarecer em vez de seguir o fluxo de criação de documento.
+    private static final double SCORE_MINIMO_RECUPERACAO = 0.75;
     private static final int JANELA_MEMORIA_MENSAGENS = 20;
 
     @Bean
@@ -82,6 +92,41 @@ public class RagAssistantConfig {
                 .orElse(false);
     }
 
+    // O template padrão do langchain4j injeta os trechos recuperados como uma instrução
+    // direta ("Answer using the following information: ..."), como se o modelo fosse
+    // OBRIGADO a usá-los — isso confundia o assistente mesmo quando os trechos recuperados
+    // não tinham nada a ver com o pedido (ex.: pedir pra CRIAR um documento sobre um assunto
+    // novo), fazendo-o travar perguntando o que fazer com "documentos sem relação" em vez de
+    // simplesmente seguir o fluxo normal de criação. Este template deixa claro que os
+    // trechos são só uma referência opcional, a ignorar quando não forem relevantes.
+    @Bean
+    public ContentInjector contentInjector() {
+        return DefaultContentInjector.builder()
+                .promptTemplate(PromptTemplate.from("""
+                        {{userMessage}}
+
+                        Trechos de documentação que PODEM (ou não) ser relevantes para esta \
+                        mensagem, encontrados por busca semântica na base de documentos:
+                        {{contents}}
+
+                        Use esses trechos SOMENTE se forem realmente relevantes para responder \
+                        à pergunta ou para a ação pedida. Se não tiverem relação com o que foi \
+                        pedido (por exemplo, se o usuário está pedindo para criar ou atualizar \
+                        um documento sobre um assunto diferente), ignore-os completamente — não \
+                        pergunte ao usuário o que fazer com eles, nem mencione que eles existem."""))
+                .build();
+    }
+
+    @Bean
+    public RetrievalAugmentor retrievalAugmentor(
+            ContentRetriever documentoContentRetriever, ContentInjector contentInjector
+    ) {
+        return DefaultRetrievalAugmentor.builder()
+                .contentRetriever(documentoContentRetriever)
+                .contentInjector(contentInjector)
+                .build();
+    }
+
     @Bean
     public ChatMemoryProvider chatMemoryProvider(ChatMemoryStore chatMemoryStore) {
         return memoryId -> MessageWindowChatMemory.builder()
@@ -96,12 +141,12 @@ public class RagAssistantConfig {
     @Bean
     public RagAssistant ragAssistantSomenteLeitura(
             ChatModel chatModel,
-            ContentRetriever documentoContentRetriever,
+            RetrievalAugmentor retrievalAugmentor,
             ChatMemoryProvider chatMemoryProvider
     ) {
         return AiServices.builder(RagAssistant.class)
                 .chatModel(chatModel)
-                .contentRetriever(documentoContentRetriever)
+                .retrievalAugmentor(retrievalAugmentor)
                 .chatMemoryProvider(chatMemoryProvider)
                 .systemMessageProvider(memoryId -> RagSystemPrompt.TEXTO)
                 .build();
@@ -114,14 +159,14 @@ public class RagAssistantConfig {
     @Bean
     public RagAssistant ragAssistantComFerramentas(
             ChatModel chatModel,
-            ContentRetriever documentoContentRetriever,
+            RetrievalAugmentor retrievalAugmentor,
             ChatMemoryProvider chatMemoryProvider,
             DocumentoTools documentoTools,
             CategoriaTools categoriaTools
     ) {
         return AiServices.builder(RagAssistant.class)
                 .chatModel(chatModel)
-                .contentRetriever(documentoContentRetriever)
+                .retrievalAugmentor(retrievalAugmentor)
                 .chatMemoryProvider(chatMemoryProvider)
                 .tools(documentoTools, categoriaTools)
                 .systemMessageProvider(memoryId -> RagSystemPrompt.TEXTO_COM_FERRAMENTAS)
