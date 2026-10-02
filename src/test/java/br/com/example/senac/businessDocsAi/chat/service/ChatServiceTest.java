@@ -179,6 +179,27 @@ class ChatServiceTest {
     }
 
     @Test
+    void respostaDoAssistenteSemTextoUsaMensagemDeFallbackEmVezDeNulo() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(false);
+        // Resultado sem texto, só com fonte — simula o modelo terminando o turno sem
+        // nenhum conteúdo textual (ex.: só uma chamada de ferramenta, sem comentário).
+        when(ragAssistantSomenteLeitura.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content(null).build());
+
+        MensagemResponseDTO resposta = chatService.enviarMensagem(conversaId, new MensagemRequestDTO("Oi"));
+
+        assertThat(resposta.conteudo()).isNotBlank();
+        verify(mensagemRepository, times(2)).save(argThat(m -> m.getConteudo() != null));
+    }
+
+    @Test
     void usuarioComumSempreUsaOAssistenteSomenteLeitura() {
         UUID conversaId = UUID.randomUUID();
         ConversaEntity conversa = new ConversaEntity();

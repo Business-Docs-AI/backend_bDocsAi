@@ -243,10 +243,22 @@ public class ChatService {
 
         List<FonteDTO> fontes = extrairFontes(resultado);
 
+        // O turno final do modelo às vezes não traz texto algum (ex.: terminou só com uma
+        // chamada de ferramenta, sem comentário) — chat_mensagem.conteudo é NOT NULL, e sem
+        // este fallback a mensagem toda falhava ao salvar, derrubando a transação (inclusive
+        // qualquer documento que a ferramenta tivesse acabado de criar/confirmar). O texto
+        // NÃO pode sugerir sucesso de uma ação: isso vira histórico real da conversa, e o
+        // próprio modelo passa a "lembrar" (erradamente) de ter concluído algo que não
+        // necessariamente aconteceu, nos turnos seguintes.
+        String conteudoResposta = resultado.content();
+        if (conteudoResposta == null || conteudoResposta.isBlank()) {
+            conteudoResposta = "(o assistente não retornou uma mensagem de texto neste turno)";
+        }
+
         MensagemEntity resposta = new MensagemEntity();
         resposta.setConversaId(conversaId);
         resposta.setPapel(Papel.ASSISTANT);
-        resposta.setConteudo(resultado.content());
+        resposta.setConteudo(conteudoResposta);
         resposta.setFontes(serializarFontes(fontes));
         resposta.setCriadoEm(LocalDateTime.now());
         mensagemRepository.save(resposta);
