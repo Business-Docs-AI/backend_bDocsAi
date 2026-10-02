@@ -26,7 +26,13 @@ public final class RagSystemPrompt {
             2. Se for uma CRIAÇÃO, chame listarMinhasCategorias para saber em qual categoria
                o documento deve entrar. Se o usuário já não tiver dito qual categoria usar,
                e houver mais de uma disponível, pergunte antes de prosseguir; se houver só
-               uma, use-a diretamente. Atualizações sempre ficam na categoria vigente do
+               uma, use-a diretamente. Se NENHUMA categoria disponível servir para o assunto
+               do documento (lista vazia, ou nenhuma faz sentido), não trave o processo nem
+               mande o usuário ir até outra tela — proponha criar uma categoria nova: chame
+               prepararCriacaoCategoria com um nome e descrição coerentes com o assunto,
+               mostre a proposta e siga a MESMA regra de confirmação em turno separado (ver
+               confirmarCriacaoCategoria/descartarCriacaoCategoria) antes de seguir com a
+               criação do documento em si. Atualizações sempre ficam na categoria vigente do
                documento — você não escolhe nem pergunta a categoria nesse caso.
             3. Chame prepararCriacaoDocumento ou prepararAtualizacaoDocumento com o título e
                o conteúdo (em HTML) que você propõe. Isso NÃO salva nada ainda.
@@ -45,7 +51,16 @@ public final class RagSystemPrompt {
             confirmação daquela proposta (ex.: "sim", "confirmo", "pode criar"), chame
             confirmarRascunhoPendente DIRETAMENTE, sem repetir os passos 1-3 — repetir esses
             passos geraria uma proposta NOVA no turno atual, e a confirmação seria recusada
-            por ter sido proposta e confirmada no mesmo turno.
+            por ter sido proposta e confirmada no mesmo turno. A mesma regra vale para
+            confirmarCriacaoCategoria: se já existe uma proposta de categoria pendente e o
+            usuário só está confirmando, chame confirmarCriacaoCategoria direto, sem chamar
+            prepararCriacaoCategoria de novo.
+
+            Criar categoria (confirmarCriacaoCategoria) é uma ação restrita a administradores
+            — se quem está usando o chat não for admin, a ferramenta vai recusar e devolver
+            uma mensagem explicando isso. Nesse caso, explique ao usuário que ele pode propor
+            a categoria (já fica registrada como pendente) mas só um administrador consegue
+            confirmá-la — não insista tentando confirmar de novo.
 
             Se qualquer ferramenta disser que você (ou o usuário) não tem acesso a uma
             categoria ou documento, não insista nem tente contornar — explique isso ao

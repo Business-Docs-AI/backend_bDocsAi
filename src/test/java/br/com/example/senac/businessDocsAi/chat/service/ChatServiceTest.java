@@ -1,5 +1,6 @@
 package br.com.example.senac.businessDocsAi.chat.service;
 
+import br.com.example.senac.businessDocsAi.categories.repository.ICategoriaRascunhoRepository;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.entity.ConversaEntity;
@@ -49,6 +50,9 @@ class ChatServiceTest {
     private IRascunhoDocumentoRepository rascunhoRepository;
 
     @Mock
+    private ICategoriaRascunhoRepository categoriaRascunhoRepository;
+
+    @Mock
     private RagAssistant ragAssistantSomenteLeitura;
 
     @Mock
@@ -74,7 +78,7 @@ class ChatServiceTest {
     @BeforeEach
     void setUp() {
         chatService = new ChatService(
-                conversaRepository, mensagemRepository, rascunhoRepository,
+                conversaRepository, mensagemRepository, rascunhoRepository, categoriaRascunhoRepository,
                 ragAssistantSomenteLeitura, ragAssistantComFerramentas,
                 currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000),
                 audioTranscricaoService, anexoTextoExtractorService, armazenamentoAnexoService,
@@ -136,6 +140,7 @@ class ChatServiceTest {
         verify(conversaRepository).delete(conversa);
         verify(mensagemRepository).deleteByConversaId(conversaId);
         verify(rascunhoRepository).deleteByConversaId(conversaId);
+        verify(categoriaRascunhoRepository).deleteByConversaId(conversaId);
         verify(armazenamentoAnexoService).excluirTudoDaConversa(conversaId);
     }
 

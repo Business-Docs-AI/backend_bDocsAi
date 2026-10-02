@@ -1,6 +1,7 @@
 package br.com.example.senac.businessDocsAi.chat.service;
 
 import br.com.example.senac.businessDocsAi.ai.generation.RagAssistant;
+import br.com.example.senac.businessDocsAi.categories.repository.ICategoriaRascunhoRepository;
 import br.com.example.senac.businessDocsAi.chat.dto.ConversaResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.CriarConversaRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.FonteDTO;
@@ -44,6 +45,7 @@ public class ChatService {
     private final IConversaRepository conversaRepository;
     private final IMensagemRepository mensagemRepository;
     private final IRascunhoDocumentoRepository rascunhoRepository;
+    private final ICategoriaRascunhoRepository categoriaRascunhoRepository;
 
     @Qualifier("ragAssistantSomenteLeitura")
     private final RagAssistant ragAssistantSomenteLeitura;
@@ -93,10 +95,10 @@ public class ChatService {
                 .toList();
     }
 
-    // Apaga tudo que pertence à conversa: mensagens, rascunhos de documento propostos nela
-    // (confirmados ou não) e qualquer áudio/anexo enviado — nada da conversa sobrevive à
-    // sua exclusão. O documento em si, se a proposta já tiver sido confirmada antes da
-    // exclusão, não é afetado: ele é uma entidade independente a partir daí.
+    // Apaga tudo que pertence à conversa: mensagens, rascunhos de documento e de categoria
+    // propostos nela (confirmados ou não) e qualquer áudio/anexo enviado — nada da conversa
+    // sobrevive à sua exclusão. O documento/categoria em si, se a proposta já tiver sido
+    // confirmada antes da exclusão, não é afetado: é uma entidade independente a partir daí.
     @PreAuthorize("isAuthenticated()")
     @Transactional
     public void excluirConversa(UUID conversaId) {
@@ -104,6 +106,7 @@ public class ChatService {
         ConversaEntity conversa = buscarConversaDoUsuarioOrElseThrow(conversaId);
 
         rascunhoRepository.deleteByConversaId(conversaId);
+        categoriaRascunhoRepository.deleteByConversaId(conversaId);
         mensagemRepository.deleteByConversaId(conversaId);
         conversaRepository.delete(conversa);
 

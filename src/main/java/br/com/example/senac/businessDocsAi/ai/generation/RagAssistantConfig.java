@@ -2,6 +2,7 @@ package br.com.example.senac.businessDocsAi.ai.generation;
 
 import br.com.example.senac.businessDocsAi.ai.prompt.RagSystemPrompt;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
+import br.com.example.senac.businessDocsAi.categories.tool.CategoriaTools;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.tool.DocumentoTools;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
@@ -115,13 +116,14 @@ public class RagAssistantConfig {
             ChatModel chatModel,
             ContentRetriever documentoContentRetriever,
             ChatMemoryProvider chatMemoryProvider,
-            DocumentoTools documentoTools
+            DocumentoTools documentoTools,
+            CategoriaTools categoriaTools
     ) {
         return AiServices.builder(RagAssistant.class)
                 .chatModel(chatModel)
                 .contentRetriever(documentoContentRetriever)
                 .chatMemoryProvider(chatMemoryProvider)
-                .tools(documentoTools)
+                .tools(documentoTools, categoriaTools)
                 .systemMessageProvider(memoryId -> RagSystemPrompt.TEXTO_COM_FERRAMENTAS)
                 .build();
     }
