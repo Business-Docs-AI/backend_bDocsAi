@@ -30,3 +30,7 @@ app:
     gemini-chat-model: ${GEMINI_CHAT_MODEL:gemini-3.8-flash}
   reindexacao:
     intervalo-ms: ${REINDEXACAO_INTERVALO_MS:300000}
+  chat:
+    # A partir de quantos caracteres uma mensagem colada no chat é considerada "texto
+    # grande" e convertida para Markdown antes de ser salva (ver MarkdownConversorService).
+    limite-caracteres-texto-grande: ${CHAT_LIMITE_CARACTERES_TEXTO_GRANDE:2000}

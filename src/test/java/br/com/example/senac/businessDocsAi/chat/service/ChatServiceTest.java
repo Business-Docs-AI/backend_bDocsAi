@@ -62,7 +62,7 @@ class ChatServiceTest {
         chatService = new ChatService(
                 conversaRepository, mensagemRepository, rascunhoRepository,
                 ragAssistantSomenteLeitura, ragAssistantComFerramentas,
-                currentUserProvider, new ObjectMapper()
+                currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000)
         );
     }
 

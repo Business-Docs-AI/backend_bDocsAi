@@ -51,6 +51,7 @@ public class ChatService {
 
     private final CurrentUserProvider currentUserProvider;
     private final ObjectMapper objectMapper;
+    private final MarkdownConversorService markdownConversorService;
 
     @PreAuthorize("isAuthenticated()")
     @Transactional
@@ -142,10 +143,12 @@ public class ChatService {
 
         buscarConversaDoUsuarioOrElseThrow(conversaId);
 
+        String perguntaTexto = markdownConversorService.converterSeNecessario(dto.pergunta());
+
         MensagemEntity pergunta = new MensagemEntity();
         pergunta.setConversaId(conversaId);
         pergunta.setPapel(Papel.USER);
-        pergunta.setConteudo(dto.pergunta());
+        pergunta.setConteudo(perguntaTexto);
         pergunta.setCriadoEm(LocalDateTime.now());
         mensagemRepository.save(pergunta);
 
@@ -160,7 +163,7 @@ public class ChatService {
                     ? ragAssistantComFerramentas
                     : ragAssistantSomenteLeitura;
 
-            resultado = assistente.responder(conversaId, dto.pergunta());
+            resultado = assistente.responder(conversaId, perguntaTexto);
         } finally {
             ConversaContextHolder.limpar();
         }
