@@ -103,8 +103,11 @@ public class DocumentoTools {
     @Tool("""
             Prepara uma PROPOSTA de criação de um documento novo — NÃO cria nada ainda, só \
             grava um rascunho. Chame listarMinhasCategorias antes para saber o ID da \
-            categoria correta. Depois de chamar esta ferramenta, mostre o título e o \
-            conteúdo propostos ao usuário e pergunte se ele confirma. NÃO chame \
+            categoria correta. Depois de chamar esta ferramenta, reproduza o título e o \
+            CONTEÚDO COMPLETO retornados por ela, na íntegra, na sua resposta ao usuário — \
+            NÃO resuma, NÃO liste apenas os tópicos/seções do documento. O usuário precisa \
+            ler o texto literal e completo para revisar e decidir se aprova, exatamente \
+            como ficaria salvo. Depois disso, pergunte se ele confirma. NÃO chame \
             confirmarRascunhoPendente na mesma resposta — só depois que o usuário \
             confirmar numa mensagem separada.""")
     public String prepararCriacaoDocumento(
@@ -147,8 +150,11 @@ public class DocumentoTools {
         rascunhoRepository.save(rascunho);
 
         return """
-                Rascunho de CRIAÇÃO preparado (ainda não salvo). Mostre isto ao usuário e \
-                peça confirmação explícita antes de chamar confirmarRascunhoPendente:
+                Rascunho de CRIAÇÃO preparado (ainda não salvo). IMPORTANTE: copie o título \
+                e o conteúdo abaixo INTEGRALMENTE na sua próxima mensagem ao usuário — NÃO \
+                resuma, NÃO parafraseie, NÃO liste só as seções/tópicos. O usuário precisa \
+                ler o texto real e completo, exatamente como ficaria salvo, para poder \
+                revisar e aprovar com segurança. Só depois disso peça a confirmação:
 
                 Título: %s
 
@@ -159,9 +165,13 @@ public class DocumentoTools {
     @Tool("""
             Prepara uma PROPOSTA de atualização de um documento já existente — NÃO atualiza \
             nada ainda, só grava um rascunho. Use buscarDocumentos antes para achar o ID \
-            certo. Depois de chamar esta ferramenta, mostre o novo conteúdo proposto ao \
-            usuário e pergunte se ele confirma. NÃO chame confirmarRascunhoPendente na \
-            mesma resposta — só depois que o usuário confirmar numa mensagem separada.""")
+            certo. Depois de chamar esta ferramenta, reproduza o novo título e o novo \
+            CONTEÚDO COMPLETO retornados por ela, na íntegra, na sua resposta ao usuário — \
+            NÃO resuma, NÃO liste apenas os tópicos/seções. O usuário precisa ler o texto \
+            literal e completo para revisar e decidir se aprova, exatamente como ficaria \
+            salvo. Depois disso, pergunte se ele confirma. NÃO chame \
+            confirmarRascunhoPendente na mesma resposta — só depois que o usuário \
+            confirmar numa mensagem separada.""")
     public String prepararAtualizacaoDocumento(
             @P("ID (UUID) do documento a atualizar, obtido via buscarDocumentos") String documentoId,
             @P("novo título proposto") String titulo,
@@ -206,9 +216,12 @@ public class DocumentoTools {
         rascunhoRepository.save(rascunho);
 
         return """
-                Rascunho de ATUALIZAÇÃO do documento %s preparado (ainda não salvo). Mostre \
-                isto ao usuário e peça confirmação explícita antes de chamar \
-                confirmarRascunhoPendente:
+                Rascunho de ATUALIZAÇÃO do documento %s preparado (ainda não salvo). \
+                IMPORTANTE: copie o título e o conteúdo abaixo INTEGRALMENTE na sua \
+                próxima mensagem ao usuário — NÃO resuma, NÃO parafraseie, NÃO liste só as \
+                seções/tópicos. O usuário precisa ler o texto real e completo, exatamente \
+                como ficaria salvo, para poder revisar e aprovar com segurança. Só depois \
+                disso peça a confirmação:
 
                 Novo título: %s
 

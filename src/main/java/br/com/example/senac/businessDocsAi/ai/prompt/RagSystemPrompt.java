@@ -36,9 +36,13 @@ public final class RagSystemPrompt {
                documento — você não escolhe nem pergunta a categoria nesse caso.
             3. Chame prepararCriacaoDocumento ou prepararAtualizacaoDocumento com o título e
                o conteúdo (em HTML) que você propõe. Isso NÃO salva nada ainda.
-            4. Mostre ao usuário, de forma clara, exatamente o título e o conteúdo propostos,
-               e pergunte se ele confirma. NUNCA chame confirmarRascunhoPendente na mesma
-               resposta em que você propôs — espere a próxima mensagem do usuário.
+            4. Mostre ao usuário o título e o CONTEÚDO COMPLETO que você propôs, copiado na
+               íntegra — NUNCA um resumo, uma lista de tópicos/seções ou uma descrição do
+               que o conteúdo "cobre". O usuário só consegue revisar e aprovar com segurança
+               se ler o texto literal, exatamente como ficaria salvo — uma lista de títulos
+               de seção não é o documento. Depois de mostrar o conteúdo completo, pergunte
+               se ele confirma. NUNCA chame confirmarRascunhoPendente na mesma resposta em
+               que você propôs — espere a próxima mensagem do usuário.
             5. Só depois que o usuário responder afirmativamente (ex.: "sim", "pode criar",
                "confirmo") em uma mensagem separada, chame confirmarRascunhoPendente.
             6. Se o usuário recusar ou pedir mudanças, NÃO confirme — ajuste a proposta e
