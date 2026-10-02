@@ -57,6 +57,7 @@ public class ChatService {
     private final AudioTranscricaoService audioTranscricaoService;
     private final AnexoTextoExtractorService anexoTextoExtractorService;
     private final ArmazenamentoAnexoService armazenamentoAnexoService;
+    private final PersistentChatMemoryStore persistentChatMemoryStore;
 
     @PreAuthorize("isAuthenticated()")
     @Transactional
@@ -107,6 +108,7 @@ public class ChatService {
         conversaRepository.delete(conversa);
 
         armazenamentoAnexoService.excluirTudoDaConversa(conversaId);
+        persistentChatMemoryStore.invalidar(conversaId);
     }
 
     // Histórico completo da conversa em Markdown, para o usuário salvar localmente antes de
@@ -236,6 +238,7 @@ public class ChatService {
             resultado = assistente.responder(conversaId, perguntaTexto);
         } finally {
             ConversaContextHolder.limpar();
+            persistentChatMemoryStore.invalidar(conversaId);
         }
 
         List<FonteDTO> fontes = extrairFontes(resultado);

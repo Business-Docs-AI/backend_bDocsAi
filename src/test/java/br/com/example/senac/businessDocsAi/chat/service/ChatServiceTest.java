@@ -66,6 +66,9 @@ class ChatServiceTest {
     @Mock
     private ArmazenamentoAnexoService armazenamentoAnexoService;
 
+    @Mock
+    private PersistentChatMemoryStore persistentChatMemoryStore;
+
     private ChatService chatService;
 
     @BeforeEach
@@ -74,7 +77,8 @@ class ChatServiceTest {
                 conversaRepository, mensagemRepository, rascunhoRepository,
                 ragAssistantSomenteLeitura, ragAssistantComFerramentas,
                 currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000),
-                audioTranscricaoService, anexoTextoExtractorService, armazenamentoAnexoService
+                audioTranscricaoService, anexoTextoExtractorService, armazenamentoAnexoService,
+                persistentChatMemoryStore
         );
     }
 
