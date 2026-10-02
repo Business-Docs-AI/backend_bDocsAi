@@ -18,6 +18,10 @@ server:
   port: 8080
 
 app:
+  cors:
+    # Origens do frontend liberadas para chamar a API (separadas por vírgula via env
+    # CORS_ALLOWED_ORIGINS). Default cobre as portas de dev mais comuns (Vite, CRA/Next, Angular).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,http://localhost:4200}
   jwt:
     secret: ${JWT_SECRET}
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:60}
