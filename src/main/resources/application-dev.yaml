@@ -6,8 +6,16 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration,classpath:db/migration-dev
+    # O seed (migration-dev/V9000) usa um número alto de propósito para rodar sempre por
+    # último. Isso faz qualquer migration "normal" nova (V7, V8...) parecer "fora de ordem"
+    # para quem já tinha V9000 aplicado — precisa disso para aplicar mesmo assim.
+    out-of-order: true
 
 logging:
   level:

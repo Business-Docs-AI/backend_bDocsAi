@@ -1,0 +1,329 @@
+package br.com.example.senac.businessDocsAi.document.service;
+
+import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
+import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
+import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
+import br.com.example.senac.businessDocsAi.document.dto.DocumentoRequestDTO;
+import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.dto.DocumentoVersaoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoVersaoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
+import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
+import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
+import br.com.example.senac.businessDocsAi.exception.NotFoundException;
+import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class DocumentoService {
+
+    private final IDocumentoRepository documentoRepository;
+    private final IDocumentoVersaoRepository documentoVersaoRepository;
+    private final ICategoryRepository categoryRepository;
+    private final HtmlSanitizerService htmlSanitizerService;
+    private final CurrentUserProvider currentUserProvider;
+    private final CategoriaAccessService categoriaAccessService;
+    private final ApplicationEventPublisher eventPublisher;
+
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @Transactional
+    public DocumentoResponseDTO criar(DocumentoRequestDTO dto) {
+
+        categoriaAccessService.validarAcessoCategoria(dto.categoriaId());
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
+        String hash = calcularHash(dto.titulo(), htmlSanitizado);
+
+        DocumentoEntity documento = new DocumentoEntity();
+        documento.setTitulo(dto.titulo());
+        documento.setConteudoHtml(htmlSanitizado);
+        documento.setCategoriaId(dto.categoriaId());
+        documento.setHashConteudo(hash);
+        documento.setVersaoAtual(1);
+        documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
+        documento.setCriadoPor(autor);
+        documento.setCriadoEm(LocalDateTime.now());
+        documento.setDeletado(false);
+
+        DocumentoEntity salvo = documentoRepository.save(documento);
+
+        registrarNovaVersao(salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1);
+
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(salvo.getId(), salvo.getVersaoAtual()));
+
+        return toResponseDTO(salvo);
+    }
+
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @Transactional
+    public DocumentoResponseDTO atualizar(UUID id, DocumentoRequestDTO dto) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+        categoriaAccessService.validarAcessoCategoria(dto.categoriaId());
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
+        String novoHash = calcularHash(dto.titulo(), htmlSanitizado);
+
+        documento.setCategoriaId(dto.categoriaId());
+
+        if (novoHash.equals(documento.getHashConteudo())) {
+            documentoRepository.save(documento);
+            return toResponseDTO(documento);
+        }
+
+        aplicarNovaVersao(documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao());
+
+        return toResponseDTO(documento);
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    public List<DocumentoResponseDTO> listar(Long categoriaId) {
+
+        if (categoriaId != null) {
+            categoriaAccessService.validarAcessoCategoria(categoriaId);
+        }
+
+        List<DocumentoEntity> documentos = categoriaId != null
+                ? documentoRepository.findByDeletadoFalseAndCategoriaIdOrderByTituloAsc(categoriaId)
+                : documentoRepository.findByDeletadoFalseOrderByTituloAsc();
+
+        List<DocumentoEntity> acessiveis = documentos.stream()
+                .filter(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
+                .toList();
+
+        Map<Long, String> nomesCategorias = carregarNomesCategorias(acessiveis);
+
+        return acessiveis.stream()
+                .map(documento -> toResponseDTO(documento, nomesCategorias.get(documento.getCategoriaId())))
+                .toList();
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public DocumentoResponseDTO restaurarVersao(UUID id, int numeroVersao) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+
+        DocumentoVersaoEntity versaoAlvo = documentoVersaoRepository
+                .findByDocumentoIdAndNumeroVersao(id, numeroVersao)
+                .orElseThrow(() -> new NotFoundException(
+                        "Versão " + numeroVersao + " não encontrada para o documento " + id));
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(versaoAlvo.getConteudoHtml());
+        String novoHash = calcularHash(versaoAlvo.getTitulo(), htmlSanitizado);
+
+        if (novoHash.equals(documento.getHashConteudo())) {
+            return toResponseDTO(documento);
+        }
+
+        String comentario = "Restauração da versão " + numeroVersao;
+        aplicarNovaVersao(documento, versaoAlvo.getTitulo(), htmlSanitizado, novoHash, autor, comentario);
+
+        return toResponseDTO(documento);
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public void excluir(UUID id) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+
+        documento.setDeletado(true);
+        documento.setExcluidoEm(LocalDateTime.now());
+        documentoRepository.save(documento);
+
+        eventPublisher.publishEvent(new DocumentoExcluidoEvent(documento.getId()));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    public DocumentoResponseDTO buscarPorId(UUID id) {
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+        return toResponseDTO(documento);
+    }
+
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public List<DocumentoVersaoResponseDTO> listarVersoes(UUID id) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+
+        return documentoVersaoRepository.findByDocumentoIdOrderByNumeroVersaoDesc(id)
+                .stream()
+                .map(this::toVersaoResponseDTO)
+                .toList();
+    }
+
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public DocumentoVersaoResponseDTO buscarVersao(UUID id, int numeroVersao) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+
+        DocumentoVersaoEntity versao = documentoVersaoRepository
+                .findByDocumentoIdAndNumeroVersao(id, numeroVersao)
+                .orElseThrow(() -> new NotFoundException(
+                        "Versão " + numeroVersao + " não encontrada para o documento " + id));
+
+        return toVersaoResponseDTO(versao);
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public void reindexar(UUID id) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+
+        documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
+        documentoRepository.save(documento);
+
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
+    }
+
+    // Compartilhado por atualizar/restaurar: incrementa a versão vigente, grava o histórico
+    // e dispara a reindexação. Criação não passa por aqui pois a versão 1 não "incrementa" nada.
+    private void aplicarNovaVersao(
+            DocumentoEntity documento,
+            String titulo,
+            String htmlSanitizado,
+            String hash,
+            String autor,
+            String comentario
+    ) {
+        int novaVersao = documento.getVersaoAtual() + 1;
+
+        documento.setTitulo(titulo);
+        documento.setConteudoHtml(htmlSanitizado);
+        documento.setHashConteudo(hash);
+        documento.setVersaoAtual(novaVersao);
+        documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
+        documento.setAtualizadoPor(autor);
+        documento.setAtualizadoEm(LocalDateTime.now());
+
+        documentoRepository.save(documento);
+
+        registrarNovaVersao(documento, htmlSanitizado, autor, comentario, novaVersao);
+
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), novaVersao));
+    }
+
+    private void registrarNovaVersao(
+            DocumentoEntity documento,
+            String htmlSanitizado,
+            String autor,
+            String comentario,
+            int numeroVersao
+    ) {
+        DocumentoVersaoEntity versao = new DocumentoVersaoEntity();
+        versao.setDocumentoId(documento.getId());
+        versao.setNumeroVersao(numeroVersao);
+        versao.setTitulo(documento.getTitulo());
+        versao.setConteudoHtml(htmlSanitizado);
+        versao.setHashConteudo(documento.getHashConteudo());
+        versao.setAutor(autor);
+        versao.setCriadoEm(LocalDateTime.now());
+        versao.setComentarioAlteracao(comentario);
+
+        documentoVersaoRepository.save(versao);
+    }
+
+    private DocumentoEntity buscarAtivoOrElseThrow(UUID id) {
+
+        DocumentoEntity documento = documentoRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Documento não encontrado com o ID: " + id));
+
+        if (documento.isDeletado()) {
+            throw new NotFoundException("Documento não encontrado com o ID: " + id);
+        }
+
+        return documento;
+    }
+
+    private String calcularHash(String titulo, String htmlSanitizado) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(titulo.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(htmlSanitizado.getBytes(StandardCharsets.UTF_8));
+
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Algoritmo SHA-256 não disponível", e);
+        }
+    }
+
+    private DocumentoResponseDTO toResponseDTO(DocumentoEntity documento) {
+        String categoriaNome = documento.getCategoriaId() == null
+                ? null
+                : categoryRepository.findById(documento.getCategoriaId())
+                        .map(CategoryEntity::getName)
+                        .orElse(null);
+
+        return toResponseDTO(documento, categoriaNome);
+    }
+
+    private DocumentoResponseDTO toResponseDTO(DocumentoEntity documento, String categoriaNome) {
+        return new DocumentoResponseDTO(
+                documento.getId(),
+                documento.getTitulo(),
+                documento.getConteudoHtml(),
+                documento.getVersaoAtual(),
+                documento.getStatusIndexacao(),
+                documento.getCriadoPor(),
+                documento.getCriadoEm(),
+                documento.getAtualizadoPor(),
+                documento.getAtualizadoEm(),
+                documento.getCategoriaId(),
+                categoriaNome
+        );
+    }
+
+    private Map<Long, String> carregarNomesCategorias(List<DocumentoEntity> documentos) {
+        List<Long> categoriaIds = documentos.stream()
+                .map(DocumentoEntity::getCategoriaId)
+                .filter(id -> id != null)
+                .distinct()
+                .toList();
+
+        Map<Long, String> nomes = new HashMap<>();
+        categoryRepository.findAllById(categoriaIds)
+                .forEach(categoria -> nomes.put(categoria.getId(), categoria.getName()));
+
+        return nomes;
+    }
+
+    private DocumentoVersaoResponseDTO toVersaoResponseDTO(DocumentoVersaoEntity versao) {
+        return new DocumentoVersaoResponseDTO(
+                versao.getId(),
+                versao.getNumeroVersao(),
+                versao.getTitulo(),
+                versao.getConteudoHtml(),
+                versao.getAutor(),
+                versao.getCriadoEm(),
+                versao.getComentarioAlteracao()
+        );
+    }
+}

@@ -6,8 +6,15 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: validate
     show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration,classpath:db/migration-test
+    # Mesmo motivo do application-dev.yaml: o seed (migration-test/V9000) usa um número alto
+    # de propósito para rodar sempre por último.
+    out-of-order: true
 
 logging:
   level:
