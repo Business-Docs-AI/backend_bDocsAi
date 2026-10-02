@@ -39,10 +39,21 @@ public class ChatModelConfig {
             // qualquer texto, cortando a resposta com stop_reason=max_tokens e nenhum
             // conteúdo de texto (confirmado em produção: ChatService precisou de um
             // fallback só pra esse caso). 8192 dá folga de sobra pro thinking + a resposta.
+            //
+            // cacheSystemMessages/cacheTools: o system prompt (RagSystemPrompt, extenso) e
+            // as specs das ferramentas (DocumentoTools/CategoriaTools) são IDÊNTICOS em toda
+            // chamada de uma mesma conversa — sem cache, a Anthropic reprocessa esse bloco
+            // grande do zero em cada ida-e-volta do laço de tool-calling (confirmado:
+            // cache_read_input_tokens=0 em produção antes desta mudança). Com cache habilitado,
+            // só a primeira chamada de cada conversa paga o custo de prefill completo; as
+            // seguintes leem do cache da Anthropic — reduz latência por chamada justamente nos
+            // fluxos com mais round trips (criar/confirmar documento ou categoria).
             case "anthropic" -> AnthropicChatModel.builder()
                     .apiKey(anthropicApiKey)
                     .modelName(anthropicModelName)
                     .maxTokens(8192)
+                    .cacheSystemMessages(true)
+                    .cacheTools(true)
                     .logRequests(true)
                     .logResponses(true)
                     .build();
