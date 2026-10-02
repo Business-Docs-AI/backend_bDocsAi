@@ -7,6 +7,7 @@ import br.com.example.senac.businessDocsAi.chat.entity.MensagemEntity;
 import br.com.example.senac.businessDocsAi.chat.repository.IConversaRepository;
 import br.com.example.senac.businessDocsAi.chat.repository.IMensagemRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
 import br.com.example.senac.businessDocsAi.ai.generation.RagAssistant;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.util.List;
 import java.util.Optional;
@@ -55,6 +57,15 @@ class ChatServiceTest {
     @Mock
     private CurrentUserProvider currentUserProvider;
 
+    @Mock
+    private AudioTranscricaoService audioTranscricaoService;
+
+    @Mock
+    private AnexoTextoExtractorService anexoTextoExtractorService;
+
+    @Mock
+    private ArmazenamentoAnexoService armazenamentoAnexoService;
+
     private ChatService chatService;
 
     @BeforeEach
@@ -62,7 +73,8 @@ class ChatServiceTest {
         chatService = new ChatService(
                 conversaRepository, mensagemRepository, rascunhoRepository,
                 ragAssistantSomenteLeitura, ragAssistantComFerramentas,
-                currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000)
+                currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000),
+                audioTranscricaoService, anexoTextoExtractorService, armazenamentoAnexoService
         );
     }
 
@@ -103,6 +115,24 @@ class ChatServiceTest {
 
         verify(conversaRepository, never()).delete(any());
         verify(mensagemRepository, never()).deleteByConversaId(any());
+    }
+
+    @Test
+    void excluirConversaTambemRemoveOsArquivosDaConversaDoDisco() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+
+        chatService.excluirConversa(conversaId);
+
+        verify(conversaRepository).delete(conversa);
+        verify(mensagemRepository).deleteByConversaId(conversaId);
+        verify(rascunhoRepository).deleteByConversaId(conversaId);
+        verify(armazenamentoAnexoService).excluirTudoDaConversa(conversaId);
     }
 
     @Test
@@ -198,5 +228,72 @@ class ChatServiceTest {
                 .isInstanceOf(RuntimeException.class);
 
         assertThatThrownBy(ConversaContextHolder::atual).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void enviarMensagemComArquivoSemTextoAudioOuAnexoLancaBadRequest() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+
+        assertThatThrownBy(() -> chatService.enviarMensagemComArquivo(conversaId, null, null, null))
+                .isInstanceOf(BadRequestException.class);
+
+        verifyNoInteractions(ragAssistantSomenteLeitura, ragAssistantComFerramentas);
+        verify(mensagemRepository, never()).save(any());
+    }
+
+    @Test
+    void enviarMensagemComAudioTranscreveSalvaOArquivoEEnviaATranscricaoAoAssistente() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        MockMultipartFile audio = new MockMultipartFile("audio", "pergunta.mp3", "audio/mpeg", "conteudo-binario".getBytes());
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(false);
+        when(audioTranscricaoService.transcrever(audio)).thenReturn("Qual é a política de férias?");
+        when(ragAssistantSomenteLeitura.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("Resposta sobre férias").build());
+
+        chatService.enviarMensagemComArquivo(conversaId, null, audio, null);
+
+        verify(armazenamentoAnexoService).salvar(conversaId, audio);
+        verify(ragAssistantSomenteLeitura).responder(
+                eq(conversaId), argThat(texto -> texto.contains("Qual é a política de férias?"))
+        );
+    }
+
+    @Test
+    void enviarMensagemComAnexoExtraiTextoESalvaOArquivo() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        MockMultipartFile anexo = new MockMultipartFile("anexo", "politica.txt", "text/plain", "Trinta dias de férias por ano.".getBytes());
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(false);
+        when(anexoTextoExtractorService.extrairTexto(anexo)).thenReturn("Trinta dias de férias por ano.");
+        when(ragAssistantSomenteLeitura.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("ok").build());
+
+        chatService.enviarMensagemComArquivo(conversaId, "Cadastre isso como documentação", null, anexo);
+
+        verify(armazenamentoAnexoService).salvar(conversaId, anexo);
+        verify(ragAssistantSomenteLeitura).responder(eq(conversaId), argThat(texto ->
+                texto.contains("Cadastre isso como documentação")
+                        && texto.contains("politica.txt")
+                        && texto.contains("Trinta dias de férias por ano.")
+        ));
     }
 }

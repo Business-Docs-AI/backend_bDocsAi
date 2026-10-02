@@ -12,6 +12,7 @@ import br.com.example.senac.businessDocsAi.chat.entity.Papel;
 import br.com.example.senac.businessDocsAi.chat.repository.IConversaRepository;
 import br.com.example.senac.businessDocsAi.chat.repository.IMensagemRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -24,6 +25,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -52,6 +54,9 @@ public class ChatService {
     private final CurrentUserProvider currentUserProvider;
     private final ObjectMapper objectMapper;
     private final MarkdownConversorService markdownConversorService;
+    private final AudioTranscricaoService audioTranscricaoService;
+    private final AnexoTextoExtractorService anexoTextoExtractorService;
+    private final ArmazenamentoAnexoService armazenamentoAnexoService;
 
     @PreAuthorize("isAuthenticated()")
     @Transactional
@@ -87,10 +92,10 @@ public class ChatService {
                 .toList();
     }
 
-    // Apaga tudo que pertence à conversa: mensagens e também os rascunhos de documento
-    // propostos nela (confirmados ou não) — nada da conversa sobrevive à sua exclusão. O
-    // documento em si, se a proposta já tiver sido confirmada antes da exclusão, não é
-    // afetado: ele é uma entidade independente a partir daí.
+    // Apaga tudo que pertence à conversa: mensagens, rascunhos de documento propostos nela
+    // (confirmados ou não) e qualquer áudio/anexo enviado — nada da conversa sobrevive à
+    // sua exclusão. O documento em si, se a proposta já tiver sido confirmada antes da
+    // exclusão, não é afetado: ele é uma entidade independente a partir daí.
     @PreAuthorize("isAuthenticated()")
     @Transactional
     public void excluirConversa(UUID conversaId) {
@@ -100,6 +105,8 @@ public class ChatService {
         rascunhoRepository.deleteByConversaId(conversaId);
         mensagemRepository.deleteByConversaId(conversaId);
         conversaRepository.delete(conversa);
+
+        armazenamentoAnexoService.excluirTudoDaConversa(conversaId);
     }
 
     // Histórico completo da conversa em Markdown, para o usuário salvar localmente antes de
@@ -144,6 +151,69 @@ public class ChatService {
         buscarConversaDoUsuarioOrElseThrow(conversaId);
 
         String perguntaTexto = markdownConversorService.converterSeNecessario(dto.pergunta());
+
+        return processarPerguntaEResponder(conversaId, perguntaTexto);
+    }
+
+    // Mesma rota que enviarMensagem, mas aceita texto, áudio e/ou um documento anexado
+    // (multipart) — pelo menos um dos três precisa vir preenchido. Áudio é transcrito e o
+    // anexo tem seu texto extraído (ver AudioTranscricaoService/AnexoTextoExtractorService);
+    // o resultado de cada um entra como uma seção rotulada no texto final, que passa pelo
+    // mesmo pipeline de uma mensagem de texto comum (inclusive a conversão para Markdown de
+    // textos grandes). O arquivo original é guardado em disco (ArmazenamentoAnexoService),
+    // associado à conversa — não a uma mensagem específica — e é removido junto quando a
+    // conversa é excluída.
+    @PreAuthorize("isAuthenticated()")
+    @Transactional
+    public MensagemResponseDTO enviarMensagemComArquivo(
+            UUID conversaId, String pergunta, MultipartFile audio, MultipartFile anexo
+    ) {
+
+        buscarConversaDoUsuarioOrElseThrow(conversaId);
+
+        boolean temTexto = pergunta != null && !pergunta.isBlank();
+        boolean temAudio = audio != null && !audio.isEmpty();
+        boolean temAnexo = anexo != null && !anexo.isEmpty();
+
+        if (!temTexto && !temAudio && !temAnexo) {
+            throw new BadRequestException("Envie um texto, um áudio ou um documento anexado.");
+        }
+
+        StringBuilder perguntaTexto = new StringBuilder();
+
+        if (temTexto) {
+            perguntaTexto.append(markdownConversorService.converterSeNecessario(pergunta));
+        }
+
+        if (temAudio) {
+            String transcricao = audioTranscricaoService.transcrever(audio);
+            adicionarSecao(perguntaTexto, "Transcrição do áudio enviado", transcricao);
+            armazenamentoAnexoService.salvar(conversaId, audio);
+        }
+
+        if (temAnexo) {
+            String textoExtraido = anexoTextoExtractorService.extrairTexto(anexo);
+            String textoConvertido = markdownConversorService.converterSeNecessario(textoExtraido);
+            adicionarSecao(
+                    perguntaTexto, "Conteúdo do arquivo anexado: " + anexo.getOriginalFilename(), textoConvertido
+            );
+            armazenamentoAnexoService.salvar(conversaId, anexo);
+        }
+
+        return processarPerguntaEResponder(conversaId, perguntaTexto.toString());
+    }
+
+    private void adicionarSecao(StringBuilder texto, String titulo, String conteudo) {
+        if (!texto.isEmpty()) {
+            texto.append("\n\n");
+        }
+        texto.append("[").append(titulo).append("]\n").append(conteudo);
+    }
+
+    // Persiste a pergunta (já resolvida para texto, seja ela digitada, transcrita ou
+    // extraída de um anexo), chama o assistente adequado ao papel do usuário e persiste a
+    // resposta — fluxo comum a enviarMensagem e enviarMensagemComArquivo.
+    private MensagemResponseDTO processarPerguntaEResponder(UUID conversaId, String perguntaTexto) {
 
         MensagemEntity pergunta = new MensagemEntity();
         pergunta.setConversaId(conversaId);

@@ -7,6 +7,13 @@ spring:
       hibernate:
         format_sql: true
 
+  servlet:
+    multipart:
+      # Áudio/anexo enviados no chat (ver ChatController#enviarMensagemComArquivo) — o
+      # default do Spring (1MB) é pequeno demais até para um áudio curto.
+      max-file-size: 20MB
+      max-request-size: 25MB
+
 server:
   port: 8080
 
