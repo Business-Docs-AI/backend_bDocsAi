@@ -1,5 +1,6 @@
 package br.com.example.senac.businessDocsAi.chat.service;
 
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import dev.langchain4j.data.message.AudioContent;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
@@ -44,6 +45,16 @@ public class AudioTranscricaoService {
                 AudioContent.from(base64, mimeType)
         );
 
-        return chatModel.chat(mensagem).aiMessage().text();
+        try {
+            return chatModel.chat(mensagem).aiMessage().text();
+        } catch (IllegalArgumentException e) {
+            // O provedor de chat configurado (ver app.ai.chat-provider) pode não suportar
+            // áudio como entrada multimodal — hoje é o caso da Anthropic, que rejeita
+            // AudioContent client-side com IllegalArgumentException antes de ir à rede.
+            throw new BadRequestException(
+                    "O provedor de IA configurado não suporta áudio. Envie o texto diretamente "
+                            + "ou troque para um provedor com suporte a áudio (ex.: Gemini)."
+            );
+        }
     }
 }

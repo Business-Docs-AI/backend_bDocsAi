@@ -7,6 +7,7 @@ import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -15,6 +16,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,5 +50,18 @@ class AudioTranscricaoServiceTest {
 
         AudioContent audioContent = (AudioContent) mensagemEnviada.contents().get(1);
         assertThat(audioContent.audio().mimeType()).isEqualTo("audio/mpeg");
+    }
+
+    @Test
+    void transcreverLancaBadRequestQuandoOProvedorNaoSuportaAudio() {
+        AudioTranscricaoService service = new AudioTranscricaoService(chatModel);
+
+        MockMultipartFile audio = new MockMultipartFile("audio", "pergunta.wav", "audio/wav", "bytes".getBytes());
+
+        when(chatModel.chat(any(ChatMessage.class)))
+                .thenThrow(new IllegalArgumentException("Unknown content type: AudioContent"));
+
+        assertThatThrownBy(() -> service.transcrever(audio))
+                .isInstanceOf(BadRequestException.class);
     }
 }

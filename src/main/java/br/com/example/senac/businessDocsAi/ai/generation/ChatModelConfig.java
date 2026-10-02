@@ -36,6 +36,8 @@ public class ChatModelConfig {
             case "anthropic" -> AnthropicChatModel.builder()
                     .apiKey(anthropicApiKey)
                     .modelName(anthropicModelName)
+                    .logRequests(true)
+                    .logResponses(true)
                     .build();
 
             case "gemini" -> GoogleAiGeminiChatModel.builder()
