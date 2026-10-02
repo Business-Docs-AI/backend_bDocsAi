@@ -120,15 +120,29 @@ public class DocumentoTools {
 
         var contexto = ConversaContextHolder.atual();
 
-        RascunhoDocumentoEntity rascunho = new RascunhoDocumentoEntity();
+        // A IA às vezes "reprepara" a mesma proposta num turno seguinte (ex.: ao confirmar,
+        // repete os passos de busca/preparo antes de confirmar de fato) — se isso resetasse
+        // turnoCriacao, a proposta refeita nunca poderia ser confirmada no mesmo turno em
+        // que foi "reproposta", mesmo já tendo passado por um turno anterior de verdade. Por
+        // isso: havendo rascunho pendente desta conversa, atualiza o conteúdo dele mas
+        // preserva o turnoCriacao original.
+        RascunhoDocumentoEntity rascunho = rascunhoRepository
+                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.PENDENTE)
+                .orElseGet(RascunhoDocumentoEntity::new);
+
+        boolean novo = rascunho.getId() == null;
+
         rascunho.setConversaId(contexto.conversaId());
         rascunho.setTipo(TipoRascunho.CRIAR);
+        rascunho.setDocumentoIdAlvo(null);
         rascunho.setCategoriaId(categoriaId);
         rascunho.setTitulo(titulo);
         rascunho.setConteudoHtml(conteudoHtml);
         rascunho.setStatus(StatusRascunho.PENDENTE);
-        rascunho.setTurnoCriacao(contexto.turnoAtual());
-        rascunho.setCriadoEm(LocalDateTime.now());
+        if (novo) {
+            rascunho.setTurnoCriacao(contexto.turnoAtual());
+            rascunho.setCriadoEm(LocalDateTime.now());
+        }
 
         rascunhoRepository.save(rascunho);
 
@@ -169,7 +183,14 @@ public class DocumentoTools {
 
         var contexto = ConversaContextHolder.atual();
 
-        RascunhoDocumentoEntity rascunho = new RascunhoDocumentoEntity();
+        // Ver prepararCriacaoDocumento: preserva o turnoCriacao de um rascunho pendente já
+        // existente desta conversa em vez de resetá-lo a cada "reproposta".
+        RascunhoDocumentoEntity rascunho = rascunhoRepository
+                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.PENDENTE)
+                .orElseGet(RascunhoDocumentoEntity::new);
+
+        boolean novo = rascunho.getId() == null;
+
         rascunho.setConversaId(contexto.conversaId());
         rascunho.setTipo(TipoRascunho.ATUALIZAR);
         rascunho.setDocumentoIdAlvo(id);
@@ -177,8 +198,10 @@ public class DocumentoTools {
         rascunho.setTitulo(titulo);
         rascunho.setConteudoHtml(conteudoHtml);
         rascunho.setStatus(StatusRascunho.PENDENTE);
-        rascunho.setTurnoCriacao(contexto.turnoAtual());
-        rascunho.setCriadoEm(LocalDateTime.now());
+        if (novo) {
+            rascunho.setTurnoCriacao(contexto.turnoAtual());
+            rascunho.setCriadoEm(LocalDateTime.now());
+        }
 
         rascunhoRepository.save(rascunho);
 

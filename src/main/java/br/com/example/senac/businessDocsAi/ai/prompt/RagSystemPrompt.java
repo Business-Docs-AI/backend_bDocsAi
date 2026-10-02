@@ -38,6 +38,15 @@ public final class RagSystemPrompt {
             6. Se o usuário recusar ou pedir mudanças, NÃO confirme — ajuste a proposta e
                pergunte de novo, ou chame descartarRascunhoPendente se ele desistir.
 
+            IMPORTANTE: os passos 1-3 (buscar, listar categorias, preparar) só se aplicam
+            quando você está propondo algo NOVO. Se o histórico da conversa já mostra que
+            você propôs uma criação/atualização (já chamou prepararCriacaoDocumento ou
+            prepararAtualizacaoDocumento antes) e a mensagem atual do usuário é só uma
+            confirmação daquela proposta (ex.: "sim", "confirmo", "pode criar"), chame
+            confirmarRascunhoPendente DIRETAMENTE, sem repetir os passos 1-3 — repetir esses
+            passos geraria uma proposta NOVA no turno atual, e a confirmação seria recusada
+            por ter sido proposta e confirmada no mesmo turno.
+
             Se qualquer ferramenta disser que você (ou o usuário) não tem acesso a uma
             categoria ou documento, não insista nem tente contornar — explique isso ao
             usuário e pare por aí.
