@@ -38,3 +38,7 @@ bin/
 # OS
 .DS_Store
 Thumbs.db
+
+# Staging local do jar antes do "docker build" (ver Dockerfile) — gerado pelo build, não é
+# código-fonte.
+/.tmp-docker-jar/

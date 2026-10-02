@@ -49,16 +49,16 @@ Fora do escopo inicial do MVP
 
 Neste primeiro momento, não serão implementados:
 
-Autenticação.
-Spring Security.
-JWT.
-Controle de acesso real.
 Multi-tenancy.
 Auditoria avançada.
 Workflow de aprovação.
 Integrações completas com plataformas externas.
 
 Esses recursos serão implementados posteriormente, após a conclusão e validação da estrutura principal do sistema.
+
+> **Atualização:** autenticação, Spring Security, JWT e controle de acesso real (perfis
+> ADMIN/EDITOR/USUARIO aplicados em todos os endpoints e serviços) já foram implementados
+> e deixaram de ser "fora do escopo" — ver a seção de Perfis de Usuário abaixo.
 
 👥 Perfis de Usuário
 
@@ -99,6 +99,8 @@ Utilizar o chat com IA.
 Fazer perguntas sobre o conhecimento disponível.
 
 Observação: os perfis são fixos e fazem parte da regra de negócio da plataforma. Não existe cadastro de novos tipos de permissão no sistema.
+
+Autenticação é feita via login (`POST /auth/login`) com e-mail e senha, que retorna um token JWT. O perfil de cada usuário fica salvo no próprio cadastro (`role`) e é recarregado do banco a cada requisição — nunca fica só guardado no token. As permissões são checadas no backend, tanto no controller quanto no service (`@PreAuthorize`), então uma tentativa de acesso direto ao endpoint sem o perfil certo retorna 403, mesmo sem nenhuma tela por trás.
 
 📂 Categorias
 
@@ -212,6 +214,43 @@ PostgreSQL
 │
 └── Dados vetoriais
 └── Embeddings
+
+📑 Módulo de Documentação Versionada (implementado)
+
+Documentos têm título e conteúdo em HTML (sanitizado com Jsoup antes de salvar). Toda
+criação, edição ou restauração gera uma nova versão; o histórico é imutável e a versão
+vigente é sempre a mais recente. Só a versão vigente fica indexada no pgvector — a
+indexação roda de forma assíncrona depois do commit e confere se a versão ainda é a vigente
+antes de gravar embeddings, para uma indexação atrasada nunca sobrescrever uma versão mais
+nova. Um job agendado reprocessa documentos cuja indexação ficou pendente ou deu erro.
+
+Permissões (aplicadas no backend, em endpoints e serviços):
+
+| Ação                                         | ADMIN | EDITOR | USUARIO |
+|-----------------------------------------------|-------|--------|---------|
+| Visualizar documento (versão vigente)          | sim   | sim    | sim     |
+| Busca semântica                                | sim   | sim    | sim     |
+| Usar o próprio chat com IA                     | sim   | sim    | sim     |
+| Criar e editar documentos                      | sim   | sim    | não     |
+| Ver histórico de versões                       | sim   | sim    | não     |
+| Restaurar versão anterior                      | sim   | não    | não     |
+| Excluir documentos                             | sim   | não    | não     |
+| Forçar reindexação                             | sim   | não    | não     |
+
+Endpoints principais:
+
+POST /documentos · PUT /documentos/{id} · DELETE /documentos/{id} · GET /documentos/{id}
+GET /documentos/{id}/versoes · GET /documentos/{id}/versoes/{numero}
+POST /documentos/{id}/versoes/{numero}/restaurar · POST /documentos/{id}/reindexar
+GET /documentos/busca?q=...
+POST /chat/conversas · GET /chat/conversas · GET /chat/conversas/{id}
+POST /chat/conversas/{id}/mensagens · DELETE /chat/conversas/{id}
+
+O chat é isolado por usuário (uma conversa de outro usuário nunca é acessível) e o
+assistente de IA responde só com base nos trechos recuperados da documentação, sempre
+devolvendo as fontes (documento e seção) usadas na resposta — ele não tem nenhuma
+ferramenta capaz de alterar documentos, só de ler.
+
 🏗️ Arquitetura
 
 O backend está organizado seguindo uma arquitetura em camadas, separando responsabilidades por domínio.
@@ -222,15 +261,28 @@ Backend
 │
 ├── Handler
 │
+├── Security (JWT, filtros, autorização)
+│
+├── Auth (login)
+│
+├── Infra (async/scheduling)
+│
 ├── AI
-│   ├── Chat
 │   ├── Prompt
 │   ├── Embeddings
 │   ├── Retrieval
-│   ├── Ingestion
 │   └── Generation
 │
-├── Documentation
+├── Document (documento versionado + RAG)
+│   ├── Controller
+│   ├── Service
+│   ├── Entity
+│   ├── Repository
+│   ├── Event
+│   ├── Job
+│   └── DTO
+│
+├── Documentation (CRUD simples legado, sem versionamento)
 │   ├── Controller
 │   ├── Service
 │   ├── Entity
@@ -251,7 +303,7 @@ Backend
 │   ├── Repository
 │   └── DTO
 │
-├── Chat
+├── Chat (conversas por usuário + RAG)
 │   ├── Controller
 │   ├── Service
 │   ├── Entity
@@ -292,6 +344,9 @@ Java 25
 Spring Boot
 Spring Data JPA
 Spring Validation
+Spring Security
+JWT
+Flyway
 Gradle
 Lombok
 Inteligência Artificial
@@ -350,6 +405,44 @@ http://localhost:5050
 O projeto atualmente não utiliza hot reload. Alterações no código exigem a reconstrução da imagem do backend.
 
 Para mais detalhes sobre a configuração do ambiente, consulte a documentação de setup do projeto.
+
+⚠️ Migrations (Flyway)
+
+O schema do banco passou a ser controlado por migrations versionadas (Flyway), em vez do
+`ddl-auto` do Hibernate criando/alterando tabelas automaticamente. Se você já tinha o
+ambiente de desenvolvimento rodando antes dessa mudança, o volume do Postgres já contém as
+tabelas antigas (criadas pelo `ddl-auto`) e o Flyway vai falhar ao tentar recriá-las. Rode
+uma vez, para recomeçar do zero:
+
+docker compose down -v
+docker compose up --build
+
+🔑 Variáveis de Ambiente
+
+Copie `.env.example` para `.env` e preencha antes de subir o projeto. Além das variáveis de
+banco já existentes, agora também são necessárias:
+
+JWT_SECRET — segredo usado para assinar os tokens (HS256 exige pelo menos 256 bits/32
+bytes; gere um com `openssl rand -base64 48`).
+JWT_EXPIRATION_MINUTES — validade do token em minutos (padrão: 60).
+AI_CHAT_PROVIDER — qual provedor de LLM usar no chat: `gemini` (padrão, tem camada
+gratuita), `anthropic` ou `openai`. A troca é só configuração, sem mexer em código (ver
+`ai/generation/ChatModelConfig`).
+AI_EMBEDDING_PROVIDER — qual provedor usar para embeddings (indexação/busca semântica):
+`local` (padrão — roda o modelo all-MiniLM-L6-v2 quantizado em processo via ONNX, sem
+nenhuma chave/chamada externa) ou `openai` (ver `ai/embeddings/EmbeddingConfig`).
+GEMINI_API_KEY / GEMINI_CHAT_MODEL — chave (gerada no Google AI Studio) e modelo do Gemini
+usados no chat quando `AI_CHAT_PROVIDER=gemini` (padrão do modelo: `gemini-3.8-flash`).
+ANTHROPIC_API_KEY / ANTHROPIC_CHAT_MODEL — chave e modelo da Anthropic usados no chat quando
+`AI_CHAT_PROVIDER=anthropic` (padrão do modelo: `claude-sonnet-5`).
+OPENAI_API_KEY / OPENAI_CHAT_MODEL / OPENAI_EMBEDDING_MODEL / OPENAI_EMBEDDING_DIMENSION —
+só necessários se `AI_CHAT_PROVIDER=openai` e/ou `AI_EMBEDDING_PROVIDER=openai` (padrões:
+`gpt-4o-mini`, `text-embedding-3-small`, `1536`). Com tudo no padrão (`gemini` + `local`),
+o projeto funciona sem nenhuma chave da OpenAI.
+
+Em ambiente de desenvolvimento (`dev`) e teste (`test`), um usuário ADMIN inicial é criado
+automaticamente via migration (`admin@businessdocs.ai` / `admin123`), só para conseguir
+fazer login e criar os demais usuários — essa migration não existe no perfil `prod`.
 
 🌎 Ambientes
 
@@ -418,10 +511,6 @@ Implementação do RAG
 Chat com IA
 Estrutura de integrações
 🔮 Futuras versões
-Autenticação
-Spring Security
-JWT
-Controle de acesso
 Multiempresa (Multi-tenant)
 Dashboard
 Auditoria

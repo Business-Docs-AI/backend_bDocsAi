@@ -1,0 +1,538 @@
+{
+  "info": {
+    "name": "bDocsAi - Business Docs AI",
+    "_postman_id": "b7c1f5b0-6f1a-4a5a-9d3e-1a2b3c4d5e6f",
+    "description": "Coleção completa dos endpoints do backend do bDocsAi.\n\n## Como usar\n1. Importe esta coleção no Postman.\n2. Confira a variável de coleção `baseUrl` (padrão `http://localhost:8080`, ajuste se necessário).\n3. Rode **Auth > Login** primeiro — o token JWT é salvo automaticamente na variável `{{token}}` e reutilizado por todas as outras requisições (autenticação Bearer configurada no nível da coleção).\n4. Usuário ADMIN já semeado em dev/test: `admin@businessdocs.ai` / `admin123`.\n5. Requisições de criação (usuário, categoria, documentação, documento, conversa) salvam o `id` retornado em variáveis de coleção (`userId`, `categoryId`, `documentationId`, `documentoId`, `conversaId`), usadas automaticamente pelas requisições seguintes que dependem de um ID.\n\n## Perfis e permissões (aplicadas no backend)\n| Ação | ADMIN | EDITOR | USUARIO |\n|---|---|---|---|\n| Visualizar documento / busca semântica / chat próprio | sim | sim | sim |\n| Criar/editar documento | sim | sim | não (403) |\n| Ver histórico de versões | sim | sim | não (403) |\n| Restaurar versão | sim | não (403) | não (403) |\n| Excluir documento | sim | não (403) | não (403) |\n| Forçar reindexação | sim | não (403) | não (403) |\n\nPara testar os 403, crie usuários EDITOR/USUARIO (via **Usuários > Criar usuário**, autenticado como ADMIN), faça login com eles e repita as chamadas.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "categoryId", "value": "", "type": "string" },
+    { "key": "conversationId", "value": "", "type": "string" },
+    { "key": "fileId", "value": "", "type": "string" },
+    { "key": "documentoId", "value": "", "type": "string" },
+    { "key": "conversaId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@businessdocs.ai\",\n  \"password\": \"admin123\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Login com email e senha. Retorna um token JWT. Não exige autenticação prévia."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.collectionVariables.set('token', json.token);",
+                  "    console.log('Token salvo em {{token}}');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Usuários",
+      "item": [
+        {
+          "name": "Criar usuário (ADMIN)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Editor de Testes\",\n  \"email\": \"editor@businessdocs.ai\",\n  \"password\": \"editor123\",\n  \"role\": \"EDITOR\",\n  \"permissionId\": null,\n  \"categoriaIds\": [{{categoryId}}]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["users"]
+            },
+            "description": "Só ADMIN. `role` aceita ADMIN, EDITOR ou USUARIO. `categoriaIds` são as categorias às quais o usuário tem acesso (ADMIN acessa todas, independentemente desta lista) — rode \"Categorias > Criar categoria\" antes. Troque o email/role para criar um EDITOR ou USUARIO e testar a matriz de permissões fazendo login com eles depois."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('userId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar usuários",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] }
+          }
+        },
+        {
+          "name": "Buscar usuário por ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{userId}}"]
+            }
+          }
+        },
+        {
+          "name": "Buscar usuário por email",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/email/admin@businessdocs.ai",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "email", "admin@businessdocs.ai"]
+            }
+          }
+        },
+        {
+          "name": "Atualizar usuário (ADMIN)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Editor de Testes (atualizado)\",\n  \"email\": \"editor@businessdocs.ai\",\n  \"role\": \"EDITOR\",\n  \"permissionId\": null,\n  \"categoriaIds\": [{{categoryId}}]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{userId}}"]
+            },
+            "description": "Só ADMIN. Campo `password` é opcional aqui — se omitido, a senha atual é mantida. `categoriaIds` substitui por completo o conjunto de categorias do usuário."
+          }
+        },
+        {
+          "name": "Ativar usuário (ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{userId}}", "activate"]
+            }
+          }
+        },
+        {
+          "name": "Desativar usuário (ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}/deactivate",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{userId}}", "deactivate"]
+            }
+          }
+        },
+        {
+          "name": "Excluir usuário (ADMIN)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{userId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Categorias",
+      "item": [
+        {
+          "name": "Criar categoria",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Recursos Humanos\",\n  \"description\": \"Documentos relacionados a RH\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/categories", "host": ["{{baseUrl}}"], "path": ["categories"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('categoryId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar categorias",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/categories", "host": ["{{baseUrl}}"], "path": ["categories"] }
+          }
+        },
+        {
+          "name": "Buscar categoria por ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/categories/{{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["categories", "{{categoryId}}"]
+            }
+          }
+        },
+        {
+          "name": "Atualizar categoria",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Recursos Humanos\",\n  \"description\": \"Descrição atualizada\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/categories/{{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["categories", "{{categoryId}}"]
+            }
+          }
+        },
+        {
+          "name": "Excluir categoria",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/categories/{{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["categories", "{{categoryId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload de Arquivos (legado)",
+      "item": [
+        {
+          "name": "Upload de arquivo (PDF/DOCX)",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [] }
+              ]
+            },
+            "url": { "raw": "{{baseUrl}}/files/upload", "host": ["{{baseUrl}}"], "path": ["files", "upload"] },
+            "description": "Selecione um arquivo PDF ou DOCX no campo `file` (aba Body > form-data, tipo \"File\"). Só aceita `application/pdf` ou `application/vnd.openxmlformats-officedocument.wordprocessingml.document`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Conversas de Arquivos (legado)",
+      "item": [
+        {
+          "name": "Anexar arquivo a uma conversa",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/files/{{fileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{conversationId}}", "files", "{{fileId}}"]
+            },
+            "description": "Requer que já existam uma `conversation` e um `arquivo` (upload) cadastrados no banco — não há endpoint de criação de conversa neste módulo legado. Ajuste as variáveis `conversationId`/`fileId` manualmente."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documentos (RAG)",
+      "description": "Gestão de documentação versionada com indexação semântica (pgvector) e busca. Criar/editar exige ADMIN ou EDITOR; excluir/restaurar/reindexar exige ADMIN.",
+      "item": [
+        {
+          "name": "Criar documento",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"titulo\": \"Politica de Ferias\",\n  \"conteudoHtml\": \"<h1 id=\\\"intro\\\">Introducao</h1><p>Todo colaborador tem direito a 30 dias de ferias por ano trabalhado.</p><h2 id=\\\"solicitacao\\\">Como solicitar</h2><p>A solicitacao deve ser feita com pelo menos 30 dias de antecedencia atraves do sistema de RH.</p>\",\n  \"comentarioAlteracao\": \"Criação inicial\",\n  \"categoriaId\": {{categoryId}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/documentos", "host": ["{{baseUrl}}"], "path": ["documentos"] },
+            "description": "ADMIN ou EDITOR, e só em categorias às quais o usuário tenha acesso (ver \"Usuários > categoriaIds\"; ADMIN acessa todas). O HTML é sanitizado no servidor e indexado de forma assíncrona logo em seguida (confira `statusIndexacao` no GET por ID após alguns segundos)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('documentoId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar documentos",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/documentos?categoriaId={{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos"],
+              "query": [{ "key": "categoriaId", "value": "{{categoryId}}", "disabled": true }]
+            },
+            "description": "Qualquer perfil autenticado. Sem `categoriaId`, lista os documentos de todas as categorias que o usuário pode acessar (ADMIN vê todas); com `categoriaId`, exige acesso a ela. Alimenta a tela de \"Documentações\" organizada por categoria."
+          }
+        },
+        {
+          "name": "Buscar documento por ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}"]
+            },
+            "description": "Qualquer perfil autenticado, desde que tenha acesso à categoria do documento. Confira `statusIndexacao`: PENDENTE -> INDEXADO (assíncrono, leva alguns segundos) ou ERRO."
+          }
+        },
+        {
+          "name": "Atualizar documento",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"titulo\": \"Politica de Ferias\",\n  \"conteudoHtml\": \"<h1 id=\\\"intro\\\">Introducao</h1><p>Todo colaborador tem direito a 30 dias de ferias por ano trabalhado, podendo ser divididas em ate 3 periodos.</p><h2 id=\\\"solicitacao\\\">Como solicitar</h2><p>A solicitacao deve ser feita com pelo menos 30 dias de antecedencia atraves do sistema de RH.</p>\",\n  \"comentarioAlteracao\": \"Adicionada regra de fracionamento\",\n  \"categoriaId\": {{categoryId}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}"]
+            },
+            "description": "ADMIN ou EDITOR, exige acesso à categoria atual do documento e à `categoriaId` informada (permite recategorizar). Só cria uma nova versão e reindexa se o conteúdo (título+HTML) realmente mudou — reenviar o mesmo conteúdo não incrementa `versaoAtual`."
+          }
+        },
+        {
+          "name": "Listar versões do documento",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}/versoes",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}", "versoes"]
+            },
+            "description": "ADMIN ou EDITOR (USUARIO recebe 403)."
+          }
+        },
+        {
+          "name": "Buscar versão específica",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}/versoes/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}", "versoes", "1"]
+            },
+            "description": "ADMIN ou EDITOR (USUARIO recebe 403). Troque o \"1\" no fim da URL pelo número da versão desejada."
+          }
+        },
+        {
+          "name": "Restaurar versão anterior",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}/versoes/1/restaurar",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}", "versoes", "1", "restaurar"]
+            },
+            "description": "Só ADMIN (EDITOR e USUARIO recebem 403). Cria uma nova versão com o conteúdo da versão indicada e reindexa."
+          }
+        },
+        {
+          "name": "Forçar reindexação",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}/reindexar",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}", "reindexar"]
+            },
+            "description": "Só ADMIN (EDITOR e USUARIO recebem 403)."
+          }
+        },
+        {
+          "name": "Excluir documento",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/{{documentoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "{{documentoId}}"]
+            },
+            "description": "Só ADMIN (EDITOR e USUARIO recebem 403). Exclusão lógica; os embeddings são removidos."
+          }
+        },
+        {
+          "name": "Busca semântica",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/documentos/busca?q=Quantos dias de ferias eu tenho direito?",
+              "host": ["{{baseUrl}}"],
+              "path": ["documentos", "busca"],
+              "query": [
+                { "key": "q", "value": "Quantos dias de ferias eu tenho direito?" }
+              ]
+            },
+            "description": "Qualquer perfil autenticado. Busca só na versão vigente e agrupa vários trechos do mesmo documento em um único resultado."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat com IA (RAG)",
+      "description": "Conversas isoladas por usuário. Todo perfil autenticado pode usar seu próprio chat; nunca é possível acessar a conversa de outro usuário.",
+      "item": [
+        {
+          "name": "Criar conversa",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"titulo\": \"Duvida sobre ferias\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/chat/conversas", "host": ["{{baseUrl}}"], "path": ["chat", "conversas"] },
+            "description": "`titulo` é opcional — pode enviar corpo vazio `{}` ou nenhum corpo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('conversaId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar minhas conversas",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/chat/conversas", "host": ["{{baseUrl}}"], "path": ["chat", "conversas"] }
+          }
+        },
+        {
+          "name": "Ver mensagens da conversa",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversas/{{conversaId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "conversas", "{{conversaId}}"]
+            }
+          }
+        },
+        {
+          "name": "Enviar mensagem",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pergunta\": \"Segundo a politica interna, quantos dias de ferias eu tenho e como solicito?\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversas/{{conversaId}}/mensagens",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "conversas", "{{conversaId}}", "mensagens"]
+            },
+            "description": "Só responde com base em documentos já INDEXADOS (crie/indexe um documento antes). A resposta traz `fontes` (documento + seção) usadas para responder."
+          }
+        },
+        {
+          "name": "Excluir conversa",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversas/{{conversaId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "conversas", "{{conversaId}}"]
+            },
+            "description": "Apaga a conversa, as mensagens e também os rascunhos de documento propostos nela (confirmados ou não). Documentos já confirmados antes da exclusão não são afetados."
+          }
+        },
+        {
+          "name": "Exportar conversa (Markdown)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/chat/conversas/{{conversaId}}/exportar",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "conversas", "{{conversaId}}", "exportar"]
+            },
+            "description": "Devolve o histórico completo da conversa em Markdown (text/markdown), para salvar localmente — útil quando uma proposta não foi aprovada e o usuário quer guardar o histórico antes de excluir a conversa."
+          }
+        }
+      ]
+    }
+  ]
+}
