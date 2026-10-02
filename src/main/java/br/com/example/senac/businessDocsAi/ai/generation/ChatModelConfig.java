@@ -33,9 +33,16 @@ public class ChatModelConfig {
                     .modelName(openAiModelName)
                     .build();
 
+            // Sem maxTokens, o SDK usa um default baixo (1024) — e o "thinking" do Claude
+            // Sonnet entra nessa mesma cota. Numa resposta com várias chamadas de
+            // ferramenta, o thinking sozinho pode consumir a cota inteira antes de gerar
+            // qualquer texto, cortando a resposta com stop_reason=max_tokens e nenhum
+            // conteúdo de texto (confirmado em produção: ChatService precisou de um
+            // fallback só pra esse caso). 8192 dá folga de sobra pro thinking + a resposta.
             case "anthropic" -> AnthropicChatModel.builder()
                     .apiKey(anthropicApiKey)
                     .modelName(anthropicModelName)
+                    .maxTokens(8192)
                     .logRequests(true)
                     .logResponses(true)
                     .build();
