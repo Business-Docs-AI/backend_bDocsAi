@@ -17,6 +17,7 @@ import br.com.example.senac.businessDocsAi.chat.dto.RascunhoPendenteResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.entity.ConversaEntity;
 import br.com.example.senac.businessDocsAi.chat.entity.MensagemEntity;
 import br.com.example.senac.businessDocsAi.chat.entity.Papel;
+import br.com.example.senac.businessDocsAi.chat.event.ConversaMensagemRecebidaEvent;
 import br.com.example.senac.businessDocsAi.chat.repository.IConversaRepository;
 import br.com.example.senac.businessDocsAi.chat.repository.IMensagemRepository;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
@@ -34,6 +35,7 @@ import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.service.Result;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -73,6 +75,7 @@ public class ChatService {
     private final PersistentChatMemoryStore persistentChatMemoryStore;
     private final ICategoryRepository categoryRepository;
     private final DocumentoService documentoService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @PreAuthorize("isAuthenticated()")
     @Transactional
@@ -253,6 +256,10 @@ public class ChatService {
         pergunta.setConteudo(perguntaTexto);
         pergunta.setCriadoEm(LocalDateTime.now());
         mensagemRepository.save(pergunta);
+
+        // Título automático da conversa (ver ChatTituloListener) — publicado aqui e tratado
+        // de forma assíncrona, depois do commit, pra nunca atrasar a resposta do chat.
+        eventPublisher.publishEvent(new ConversaMensagemRecebidaEvent(conversaId, perguntaTexto));
 
         // Marca o início do turno para distinguir, depois, um rascunho CONFIRMADO nesta
         // mesma chamada (documentoConfirmado) de um confirmado em um turno anterior.

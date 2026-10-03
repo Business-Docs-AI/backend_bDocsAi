@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.util.List;
@@ -81,6 +82,9 @@ class ChatServiceTest {
     @Mock
     private DocumentoService documentoService;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private ChatService chatService;
 
     @BeforeEach
@@ -90,7 +94,7 @@ class ChatServiceTest {
                 ragAssistantSomenteLeitura, ragAssistantComFerramentas,
                 currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000),
                 audioTranscricaoService, anexoTextoExtractorService, armazenamentoAnexoService,
-                persistentChatMemoryStore, categoryRepository, documentoService
+                persistentChatMemoryStore, categoryRepository, documentoService, eventPublisher
         );
     }
 
@@ -294,6 +298,29 @@ class ChatServiceTest {
 
         assertThat(resposta.documentoConfirmado()).isEqualTo(documentoDTO);
         assertThat(resposta.propostaDocumento()).isNull();
+    }
+
+    @Test
+    void enviarMensagemPublicaEventoParaGeracaoDeTituloEmBackground() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(false);
+        when(ragAssistantSomenteLeitura.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("ok").build());
+
+        chatService.enviarMensagem(conversaId, new MensagemRequestDTO("Qual a política de férias?"));
+
+        org.mockito.ArgumentCaptor<br.com.example.senac.businessDocsAi.chat.event.ConversaMensagemRecebidaEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(br.com.example.senac.businessDocsAi.chat.event.ConversaMensagemRecebidaEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+
+        assertThat(captor.getValue().conversaId()).isEqualTo(conversaId);
+        assertThat(captor.getValue().perguntaTexto()).isEqualTo("Qual a política de férias?");
     }
 
     @Test
