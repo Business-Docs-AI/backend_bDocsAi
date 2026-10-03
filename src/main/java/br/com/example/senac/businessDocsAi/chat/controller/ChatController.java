@@ -4,6 +4,7 @@ import br.com.example.senac.businessDocsAi.chat.dto.ConversaResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.CriarConversaRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemResponseDTO;
+import br.com.example.senac.businessDocsAi.chat.dto.RascunhoPendenteResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.service.ChatService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -73,6 +74,14 @@ public class ChatController {
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(chatService.enviarMensagemComArquivo(id, pergunta, audio, anexo));
+    }
+
+    // Para o frontend restaurar, ao reabrir uma conversa, o que está pendente de confirmação
+    // (proposta de documento e/ou de categoria) sem precisar reenviar uma mensagem.
+    @GetMapping("/{id}/rascunho-pendente")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<RascunhoPendenteResponseDTO> buscarRascunhoPendente(@PathVariable UUID id) {
+        return ResponseEntity.ok(chatService.buscarRascunhoPendente(id));
     }
 
     @DeleteMapping("/{id}")

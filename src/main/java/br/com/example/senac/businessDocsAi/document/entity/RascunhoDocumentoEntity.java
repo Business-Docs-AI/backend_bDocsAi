@@ -65,4 +65,11 @@ public class RascunhoDocumentoEntity {
 
     @Column(name = "confirmado_em")
     private LocalDateTime confirmadoEm;
+
+    // Preenchido só na confirmação: para CRIAR é o ID do documento novo (não existe antes
+    // disso); para ATUALIZAR é o mesmo valor de documentoIdAlvo. Permite ao ChatService
+    // devolver o documento resultante ao frontend sem precisar adivinhar qual foi, já que
+    // documentoIdAlvo é sempre nulo no caso de criação.
+    @Column(name = "documento_resultante_id")
+    private UUID documentoResultanteId;
 }

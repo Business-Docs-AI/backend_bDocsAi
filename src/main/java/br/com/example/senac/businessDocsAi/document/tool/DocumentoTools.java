@@ -103,13 +103,13 @@ public class DocumentoTools {
     @Tool("""
             Prepara uma PROPOSTA de criação de um documento novo — NÃO cria nada ainda, só \
             grava um rascunho. Chame listarMinhasCategorias antes para saber o ID da \
-            categoria correta. Depois de chamar esta ferramenta, reproduza o título e o \
-            CONTEÚDO COMPLETO retornados por ela, na íntegra, na sua resposta ao usuário — \
-            NÃO resuma, NÃO liste apenas os tópicos/seções do documento. O usuário precisa \
-            ler o texto literal e completo para revisar e decidir se aprova, exatamente \
-            como ficaria salvo. Depois disso, pergunte se ele confirma. NÃO chame \
-            confirmarRascunhoPendente na mesma resposta — só depois que o usuário \
-            confirmar numa mensagem separada.""")
+            categoria correta. O sistema já exibe o título e o conteúdo completo desta \
+            proposta ao usuário, formatado, numa área separada da tela — NÃO repita o \
+            título nem o conteúdo HTML na sua resposta, isso só duplicaria tudo sem \
+            formatação dentro da conversa. Na sua mensagem, diga de forma breve e \
+            conversacional que a proposta foi preparada (cite o título e a categoria usada \
+            numa frase) e pergunte se o usuário confirma. NÃO chame confirmarRascunhoPendente \
+            na mesma resposta — só depois que o usuário confirmar numa mensagem separada.""")
     public String prepararCriacaoDocumento(
             @P("título proposto para o documento") String titulo,
             @P("conteúdo proposto, em HTML") String conteudoHtml,
@@ -150,28 +150,22 @@ public class DocumentoTools {
         rascunhoRepository.save(rascunho);
 
         return """
-                Rascunho de CRIAÇÃO preparado (ainda não salvo). IMPORTANTE: copie o título \
-                e o conteúdo abaixo INTEGRALMENTE na sua próxima mensagem ao usuário — NÃO \
-                resuma, NÃO parafraseie, NÃO liste só as seções/tópicos. O usuário precisa \
-                ler o texto real e completo, exatamente como ficaria salvo, para poder \
-                revisar e aprovar com segurança. Só depois disso peça a confirmação:
-
-                Título: %s
-
-                Conteúdo (HTML):
-                %s""".formatted(titulo, conteudoHtml);
+                Rascunho de CRIAÇÃO preparado (ainda não salvo). O sistema já vai exibir o \
+                título e o conteúdo completo ao usuário, formatado, numa área separada da \
+                tela — NÃO repita o conteúdo HTML na sua próxima mensagem. Apenas avise \
+                brevemente que a proposta foi preparada (pode citar o título "%s" e a \
+                categoria usada) e peça a confirmação do usuário.""".formatted(titulo);
     }
 
     @Tool("""
             Prepara uma PROPOSTA de atualização de um documento já existente — NÃO atualiza \
             nada ainda, só grava um rascunho. Use buscarDocumentos antes para achar o ID \
-            certo. Depois de chamar esta ferramenta, reproduza o novo título e o novo \
-            CONTEÚDO COMPLETO retornados por ela, na íntegra, na sua resposta ao usuário — \
-            NÃO resuma, NÃO liste apenas os tópicos/seções. O usuário precisa ler o texto \
-            literal e completo para revisar e decidir se aprova, exatamente como ficaria \
-            salvo. Depois disso, pergunte se ele confirma. NÃO chame \
-            confirmarRascunhoPendente na mesma resposta — só depois que o usuário \
-            confirmar numa mensagem separada.""")
+            certo. O sistema já exibe o novo título e o novo conteúdo completo desta \
+            proposta ao usuário, formatado, numa área separada da tela — NÃO repita o \
+            título nem o conteúdo HTML na sua resposta. Na sua mensagem, diga de forma \
+            breve e conversacional que a proposta de atualização foi preparada e pergunte \
+            se o usuário confirma. NÃO chame confirmarRascunhoPendente na mesma resposta — \
+            só depois que o usuário confirmar numa mensagem separada.""")
     public String prepararAtualizacaoDocumento(
             @P("ID (UUID) do documento a atualizar, obtido via buscarDocumentos") String documentoId,
             @P("novo título proposto") String titulo,
@@ -216,17 +210,11 @@ public class DocumentoTools {
         rascunhoRepository.save(rascunho);
 
         return """
-                Rascunho de ATUALIZAÇÃO do documento %s preparado (ainda não salvo). \
-                IMPORTANTE: copie o título e o conteúdo abaixo INTEGRALMENTE na sua \
-                próxima mensagem ao usuário — NÃO resuma, NÃO parafraseie, NÃO liste só as \
-                seções/tópicos. O usuário precisa ler o texto real e completo, exatamente \
-                como ficaria salvo, para poder revisar e aprovar com segurança. Só depois \
-                disso peça a confirmação:
-
-                Novo título: %s
-
-                Novo conteúdo (HTML):
-                %s""".formatted(id, titulo, conteudoHtml);
+                Rascunho de ATUALIZAÇÃO do documento %s preparado (ainda não salvo). O \
+                sistema já vai exibir o novo título e o novo conteúdo completo ao usuário, \
+                formatado, numa área separada da tela — NÃO repita o conteúdo HTML na sua \
+                próxima mensagem. Apenas avise brevemente que a proposta de atualização \
+                (novo título: "%s") foi preparada e peça a confirmação do usuário.""".formatted(id, titulo);
     }
 
     @Tool("""
@@ -274,6 +262,7 @@ public class DocumentoTools {
 
         rascunho.setStatus(StatusRascunho.CONFIRMADO);
         rascunho.setConfirmadoEm(LocalDateTime.now());
+        rascunho.setDocumentoResultanteId(documento.id());
         rascunhoRepository.save(rascunho);
 
         return "Confirmado. Documento " + documento.id() + " agora está na versão " + documento.versaoAtual() + ".";

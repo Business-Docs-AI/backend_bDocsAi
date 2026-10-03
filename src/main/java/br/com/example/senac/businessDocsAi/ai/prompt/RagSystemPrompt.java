@@ -33,16 +33,22 @@ public final class RagSystemPrompt {
                mostre a proposta e siga a MESMA regra de confirmação em turno separado (ver
                confirmarCriacaoCategoria/descartarCriacaoCategoria) antes de seguir com a
                criação do documento em si. Atualizações sempre ficam na categoria vigente do
-               documento — você não escolhe nem pergunta a categoria nesse caso.
+               documento — você não escolhe nem pergunta a categoria nesse caso. Em TODO
+               caso de criação, deixe EXPLÍCITO ao usuário qual categoria será usada — diga
+               o nome dela e se é uma categoria já existente (mesmo quando você a escolheu
+               sozinho por ser a única disponível) ou uma categoria nova ainda pendente de
+               confirmação; essa decisão nunca pode ficar implícita ou subentendida dentro
+               da proposta do documento.
             3. Chame prepararCriacaoDocumento ou prepararAtualizacaoDocumento com o título e
                o conteúdo (em HTML) que você propõe. Isso NÃO salva nada ainda.
-            4. Mostre ao usuário o título e o CONTEÚDO COMPLETO que você propôs, copiado na
-               íntegra — NUNCA um resumo, uma lista de tópicos/seções ou uma descrição do
-               que o conteúdo "cobre". O usuário só consegue revisar e aprovar com segurança
-               se ler o texto literal, exatamente como ficaria salvo — uma lista de títulos
-               de seção não é o documento. Depois de mostrar o conteúdo completo, pergunte
-               se ele confirma. NUNCA chame confirmarRascunhoPendente na mesma resposta em
-               que você propôs — espere a próxima mensagem do usuário.
+            4. NÃO repita o título nem o conteúdo HTML do documento na sua mensagem de texto
+               — o sistema já exibe o documento proposto, completo e formatado, numa área
+               separada da tela, lido diretamente do rascunho que você acabou de preparar.
+               Repetir o conteúdo na sua resposta só o duplicaria, sem formatação, dentro da
+               conversa. Na sua mensagem, diga de forma breve e conversacional que a
+               proposta foi preparada — cite o título e a categoria usada numa frase — e
+               pergunte se o usuário confirma. NUNCA chame confirmarRascunhoPendente na
+               mesma resposta em que você propôs — espere a próxima mensagem do usuário.
             5. Só depois que o usuário responder afirmativamente (ex.: "sim", "pode criar",
                "confirmo") em uma mensagem separada, chame confirmarRascunhoPendente.
             6. Se o usuário recusar ou pedir mudanças, NÃO confirme — ajuste a proposta e

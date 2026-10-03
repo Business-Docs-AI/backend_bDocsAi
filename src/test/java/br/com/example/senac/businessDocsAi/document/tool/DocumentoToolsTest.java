@@ -139,6 +139,7 @@ class DocumentoToolsTest {
         verify(documentoService, never()).atualizar(any(), any());
         assertThat(rascunho.getStatus()).isEqualTo(StatusRascunho.CONFIRMADO);
         assertThat(rascunho.getConfirmadoEm()).isNotNull();
+        assertThat(rascunho.getDocumentoResultanteId()).isEqualTo(documentoCriado.id());
         assertThat(resposta).contains(documentoCriado.id().toString());
     }
 

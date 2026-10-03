@@ -1,18 +1,29 @@
 package br.com.example.senac.businessDocsAi.chat.service;
 
 import br.com.example.senac.businessDocsAi.ai.generation.RagAssistant;
+import br.com.example.senac.businessDocsAi.categories.entity.CategoriaRascunhoEntity;
+import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
+import br.com.example.senac.businessDocsAi.categories.entity.StatusRascunhoCategoria;
 import br.com.example.senac.businessDocsAi.categories.repository.ICategoriaRascunhoRepository;
+import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
 import br.com.example.senac.businessDocsAi.chat.dto.ConversaResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.CriarConversaRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.FonteDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemResponseDTO;
+import br.com.example.senac.businessDocsAi.chat.dto.PropostaCategoriaDTO;
+import br.com.example.senac.businessDocsAi.chat.dto.PropostaDocumentoDTO;
+import br.com.example.senac.businessDocsAi.chat.dto.RascunhoPendenteResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.entity.ConversaEntity;
 import br.com.example.senac.businessDocsAi.chat.entity.MensagemEntity;
 import br.com.example.senac.businessDocsAi.chat.entity.Papel;
 import br.com.example.senac.businessDocsAi.chat.repository.IConversaRepository;
 import br.com.example.senac.businessDocsAi.chat.repository.IMensagemRepository;
+import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusRascunho;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.service.DocumentoService;
 import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
@@ -60,6 +71,8 @@ public class ChatService {
     private final AnexoTextoExtractorService anexoTextoExtractorService;
     private final ArmazenamentoAnexoService armazenamentoAnexoService;
     private final PersistentChatMemoryStore persistentChatMemoryStore;
+    private final ICategoryRepository categoryRepository;
+    private final DocumentoService documentoService;
 
     @PreAuthorize("isAuthenticated()")
     @Transactional
@@ -93,6 +106,20 @@ public class ChatService {
         return mensagemRepository.findByConversaIdOrderByCriadoEmAsc(conversaId).stream()
                 .map(this::toMensagemResponseDTO)
                 .toList();
+    }
+
+    // Permite ao frontend restaurar o que está pendente de confirmação ao reabrir uma
+    // conversa, sem precisar reenviar uma mensagem — os mesmos dados também acompanham cada
+    // resposta de enviarMensagem/enviarMensagemComArquivo (ver processarPerguntaEResponder).
+    @PreAuthorize("isAuthenticated()")
+    public RascunhoPendenteResponseDTO buscarRascunhoPendente(UUID conversaId) {
+
+        buscarConversaDoUsuarioOrElseThrow(conversaId);
+
+        return new RascunhoPendenteResponseDTO(
+                buscarPropostaDocumentoPendente(conversaId),
+                buscarPropostaCategoriaPendente(conversaId)
+        );
     }
 
     // Apaga tudo que pertence à conversa: mensagens, rascunhos de documento e de categoria
@@ -227,6 +254,10 @@ public class ChatService {
         pergunta.setCriadoEm(LocalDateTime.now());
         mensagemRepository.save(pergunta);
 
+        // Marca o início do turno para distinguir, depois, um rascunho CONFIRMADO nesta
+        // mesma chamada (documentoConfirmado) de um confirmado em um turno anterior.
+        LocalDateTime inicioTurno = LocalDateTime.now();
+
         // Cada chamada é um "turno" novo — é o que impede DocumentoTools de confirmar um
         // rascunho proposto na mesma resposta em que foi criado (ver ConversaContextHolder).
         UUID turnoAtual = UUID.randomUUID();
@@ -266,7 +297,63 @@ public class ChatService {
         resposta.setCriadoEm(LocalDateTime.now());
         mensagemRepository.save(resposta);
 
-        return toMensagemResponseDTO(resposta, fontes);
+        return toMensagemResponseDTO(
+                resposta, fontes,
+                buscarPropostaDocumentoPendente(conversaId),
+                buscarPropostaCategoriaPendente(conversaId),
+                buscarDocumentoConfirmadoNesteTurno(conversaId, inicioTurno)
+        );
+    }
+
+    // Lê o rascunho de documento pendente (se houver) direto do banco, para o frontend
+    // renderizar o documento proposto formatado numa área separada da mensagem de chat — a
+    // IA não repete mais título/HTML na própria resposta (ver DocumentoTools).
+    private PropostaDocumentoDTO buscarPropostaDocumentoPendente(UUID conversaId) {
+        return rascunhoRepository
+                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE)
+                .map(this::toPropostaDocumentoDTO)
+                .orElse(null);
+    }
+
+    private PropostaDocumentoDTO toPropostaDocumentoDTO(RascunhoDocumentoEntity rascunho) {
+        String categoriaNome = rascunho.getCategoriaId() == null
+                ? null
+                : categoryRepository.findById(rascunho.getCategoriaId())
+                        .map(CategoryEntity::getName)
+                        .orElse(null);
+
+        return new PropostaDocumentoDTO(
+                rascunho.getId(),
+                rascunho.getTipo().name(),
+                rascunho.getDocumentoIdAlvo(),
+                rascunho.getCategoriaId(),
+                categoriaNome,
+                rascunho.getTitulo(),
+                rascunho.getConteudoHtml()
+        );
+    }
+
+    private PropostaCategoriaDTO buscarPropostaCategoriaPendente(UUID conversaId) {
+        return categoriaRascunhoRepository
+                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunhoCategoria.PENDENTE)
+                .map(this::toPropostaCategoriaDTO)
+                .orElse(null);
+    }
+
+    private PropostaCategoriaDTO toPropostaCategoriaDTO(CategoriaRascunhoEntity rascunho) {
+        return new PropostaCategoriaDTO(rascunho.getId(), rascunho.getNome(), rascunho.getDescricao());
+    }
+
+    // Detecta se UM rascunho foi confirmado durante ESTE turno (e não num turno anterior),
+    // pra devolver o documento resultante junto da resposta assim que ele é criado/atualizado
+    // — o frontend não precisa adivinhar isso a partir do texto da IA.
+    private DocumentoResponseDTO buscarDocumentoConfirmadoNesteTurno(UUID conversaId, LocalDateTime inicioTurno) {
+        return rascunhoRepository
+                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.CONFIRMADO)
+                .filter(rascunho -> rascunho.getConfirmadoEm() != null
+                        && !rascunho.getConfirmadoEm().isBefore(inicioTurno))
+                .map(rascunho -> documentoService.buscarPorId(rascunho.getDocumentoResultanteId()))
+                .orElse(null);
     }
 
     private ConversaEntity buscarConversaDoUsuarioOrElseThrow(UUID conversaId) {
@@ -317,16 +404,29 @@ public class ChatService {
         return new ConversaResponseDTO(conversa.getId(), conversa.getTitulo(), conversa.getCriadoEm());
     }
 
+    // Usado só para o histórico (buscarConversa) — propostas/documento confirmado ficam null
+    // aqui de propósito: refletem o estado ATUAL da conversa, não "o que era pendente quando
+    // esta mensagem específica foi gerada", então não fazem sentido anexados a toda mensagem
+    // antiga. Ver buscarRascunhoPendente para o estado atual ao reabrir uma conversa.
     private MensagemResponseDTO toMensagemResponseDTO(MensagemEntity mensagem) {
-        return toMensagemResponseDTO(mensagem, desserializarFontes(mensagem.getFontes()));
+        return toMensagemResponseDTO(mensagem, desserializarFontes(mensagem.getFontes()), null, null, null);
     }
 
-    private MensagemResponseDTO toMensagemResponseDTO(MensagemEntity mensagem, List<FonteDTO> fontes) {
+    private MensagemResponseDTO toMensagemResponseDTO(
+            MensagemEntity mensagem,
+            List<FonteDTO> fontes,
+            PropostaDocumentoDTO propostaDocumento,
+            PropostaCategoriaDTO propostaCategoria,
+            DocumentoResponseDTO documentoConfirmado
+    ) {
         return new MensagemResponseDTO(
                 mensagem.getId(),
                 mensagem.getPapel(),
                 mensagem.getConteudo(),
                 fontes,
+                propostaDocumento,
+                propostaCategoria,
+                documentoConfirmado,
                 mensagem.getCriadoEm()
         );
     }

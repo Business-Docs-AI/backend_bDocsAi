@@ -1,6 +1,7 @@
 package br.com.example.senac.businessDocsAi.chat.service;
 
 import br.com.example.senac.businessDocsAi.categories.repository.ICategoriaRascunhoRepository;
+import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemRequestDTO;
 import br.com.example.senac.businessDocsAi.chat.dto.MensagemResponseDTO;
 import br.com.example.senac.businessDocsAi.chat.entity.ConversaEntity;
@@ -8,6 +9,7 @@ import br.com.example.senac.businessDocsAi.chat.entity.MensagemEntity;
 import br.com.example.senac.businessDocsAi.chat.repository.IConversaRepository;
 import br.com.example.senac.businessDocsAi.chat.repository.IMensagemRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.service.DocumentoService;
 import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
@@ -73,6 +75,12 @@ class ChatServiceTest {
     @Mock
     private PersistentChatMemoryStore persistentChatMemoryStore;
 
+    @Mock
+    private ICategoryRepository categoryRepository;
+
+    @Mock
+    private DocumentoService documentoService;
+
     private ChatService chatService;
 
     @BeforeEach
@@ -82,7 +90,7 @@ class ChatServiceTest {
                 ragAssistantSomenteLeitura, ragAssistantComFerramentas,
                 currentUserProvider, new ObjectMapper(), new MarkdownConversorService(2000),
                 audioTranscricaoService, anexoTextoExtractorService, armazenamentoAnexoService,
-                persistentChatMemoryStore
+                persistentChatMemoryStore, categoryRepository, documentoService
         );
     }
 
@@ -202,6 +210,90 @@ class ChatServiceTest {
 
         assertThat(resposta.conteudo()).isNotBlank();
         verify(mensagemRepository, times(2)).save(argThat(m -> m.getConteudo() != null));
+    }
+
+    @Test
+    void enviarMensagemDevolvePropostaDeDocumentoPendenteLidaDoRascunho() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(true);
+        when(ragAssistantComFerramentas.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("Proposta preparada, confirma?").build());
+
+        br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity rascunho =
+                new br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity();
+        rascunho.setId(UUID.randomUUID());
+        rascunho.setTipo(br.com.example.senac.businessDocsAi.document.entity.TipoRascunho.CRIAR);
+        rascunho.setCategoriaId(7L);
+        rascunho.setTitulo("Política X");
+        rascunho.setConteudoHtml("<p>conteúdo</p>");
+        rascunho.setStatus(br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.PENDENTE);
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.PENDENTE))
+                .thenReturn(Optional.of(rascunho));
+
+        br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity categoria =
+                new br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity();
+        categoria.setId(7L);
+        categoria.setName("ERP / Fiscal");
+        when(categoryRepository.findById(7L)).thenReturn(Optional.of(categoria));
+
+        MensagemResponseDTO resposta = chatService.enviarMensagem(conversaId, new MensagemRequestDTO("Cria documento"));
+
+        assertThat(resposta.conteudo()).isEqualTo("Proposta preparada, confirma?");
+        assertThat(resposta.propostaDocumento()).isNotNull();
+        assertThat(resposta.propostaDocumento().titulo()).isEqualTo("Política X");
+        assertThat(resposta.propostaDocumento().conteudoHtml()).isEqualTo("<p>conteúdo</p>");
+        assertThat(resposta.propostaDocumento().categoriaNome()).isEqualTo("ERP / Fiscal");
+        assertThat(resposta.documentoConfirmado()).isNull();
+    }
+
+    @Test
+    void enviarMensagemDevolveDocumentoConfirmadoQuandoRascunhoFoiConfirmadoNesteTurno() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(true);
+        when(ragAssistantComFerramentas.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("Confirmado.").build());
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.PENDENTE))
+                .thenReturn(Optional.empty());
+
+        UUID documentoId = UUID.randomUUID();
+        br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity rascunhoConfirmado =
+                new br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity();
+        rascunhoConfirmado.setStatus(br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.CONFIRMADO);
+        rascunhoConfirmado.setConfirmadoEm(java.time.LocalDateTime.now().plusSeconds(1));
+        rascunhoConfirmado.setDocumentoResultanteId(documentoId);
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.CONFIRMADO))
+                .thenReturn(Optional.of(rascunhoConfirmado));
+
+        br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO documentoDTO =
+                new br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO(
+                        documentoId, "Política X", "<p>conteúdo</p>", 1,
+                        br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao.PENDENTE,
+                        "Autor", java.time.LocalDateTime.now(), null, null, 7L, "ERP / Fiscal"
+                );
+        when(documentoService.buscarPorId(documentoId)).thenReturn(documentoDTO);
+
+        MensagemResponseDTO resposta = chatService.enviarMensagem(conversaId, new MensagemRequestDTO("confirmo"));
+
+        assertThat(resposta.documentoConfirmado()).isEqualTo(documentoDTO);
+        assertThat(resposta.propostaDocumento()).isNull();
     }
 
     @Test
