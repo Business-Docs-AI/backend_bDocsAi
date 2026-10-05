@@ -35,7 +35,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 
 | # | Etapa | Status |
 |---|---|---|
-| 0 | CI (workflow Postgres+pgvector) | 🔄 em andamento |
+| 0 | CI (workflow Postgres+pgvector) | ✅ concluída |
 | 1 | Feature flag `documentacao-estruturada` | ⏳ pendente |
 | 2 | Metadados escalares em `documento` | ⏳ pendente |
 | 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ⏳ pendente |
@@ -111,7 +111,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 ## Log de execução
 
 ### Etapa 0 — CI
-- Arquivos: `.github/workflows/tests.yml` (novo), `docs/plano-documentacao-estruturada.md` (novo).
+- Arquivos: `.github/workflows/tests.yml` (novo), `docs/plano-documentacao-estruturada.md` (novo), `gradlew` (correção de permissão, mode 100644→100755).
 - Testes novos: nenhum (etapa não toca código de aplicação).
 - Suíte local (mesmo comando/env do CI: `./gradlew test --no-daemon`,
   `SPRING_PROFILES_ACTIVE=test`): **106/106 passando, 0 skipped, 0 falhas,
@@ -123,3 +123,11 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   é **106** desde o commit `9dbb4d1` (nenhum teste foi alterado depois
   disso até aqui). Não há teste `@Disabled`/skipped. Nenhuma regressão —
   foi erro de relato, não de código.
+- CI real: 1ª execução (`eeb596b`) falhou — `./gradlew: Permission denied`
+  (exit 126), porque `gradlew` estava versionado sem bit de execução
+  (nunca tinha rodado em Linux antes). Corrigido via
+  `git update-index --chmod=+x gradlew` (`fa3cc75`, mudança de modo só,
+  0 linhas de conteúdo). 2ª execução: ✅ sucesso — run
+  [37251793303](https://github.com/Business-Docs-AI/backend_bDocsAi/actions/runs/37251793303).
+- Desvio do plano: 1 commit extra de correção (`fa3cc75`) além do
+  commit principal da etapa, por causa do bug de permissão do `gradlew`.
