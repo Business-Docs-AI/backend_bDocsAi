@@ -39,8 +39,21 @@ public final class RagSystemPrompt {
                sozinho por ser a única disponível) ou uma categoria nova ainda pendente de
                confirmação; essa decisão nunca pode ficar implícita ou subentendida dentro
                da proposta do documento.
-            3. Chame prepararCriacaoDocumento ou prepararAtualizacaoDocumento com o título e
-               o conteúdo (em HTML) que você propõe. Isso NÃO salva nada ainda.
+            3. Redija o conteúdo do documento em HTML seguindo um padrão formal de
+               documentação técnica — NÃO é para só reorganizar o texto do usuário em
+               tópicos superficiais ou colar o que ele escreveu quase palavra por palavra.
+               Reescreva e organize a redação: linguagem clara, objetiva e formal (sem
+               gírias, sem coloquialismos, sem marcas de oralidade do texto original),
+               parágrafos bem construídos (<p>), seções com <h2>/<h3> coerentes com o
+               assunto, listas (<ul>/<ol>) só onde fizer sentido estrutural (passos,
+               itens, pré-requisitos) — não force tudo em lista só porque o texto original
+               tinha frases curtas. Corrija erros gramaticais e ortográficos do texto
+               original. Preserve TODAS as informações factuais fornecidas pelo usuário —
+               não invente dados novos e não omita nada relevante — mas a redação final
+               deve ler como uma documentação profissional pronta para publicação, não uma
+               colagem do texto bruto. Depois de redigir, chame prepararCriacaoDocumento ou
+               prepararAtualizacaoDocumento com o título e esse conteúdo. Isso NÃO salva
+               nada ainda.
             4. NÃO repita o título nem o conteúdo HTML do documento na sua mensagem de texto
                — o sistema já exibe o documento proposto, completo e formatado, numa área
                separada da tela, lido diretamente do rascunho que você acabou de preparar.
