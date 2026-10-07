@@ -53,7 +53,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 0 | CI (workflow Postgres+pgvector) | ✅ concluída |
 | 1 | Feature flag `documentacao-estruturada` | ✅ concluída |
 | 2 | Metadados escalares em `documento` | ✅ concluída |
-| 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ⏳ pendente |
+| 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ✅ concluída |
 | 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ⏳ pendente |
 | 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ⏳ pendente |
 | 6 | Áreas participantes (join table informativa) | ⏳ pendente |
@@ -207,3 +207,26 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   call sites de teste existentes toda vez que um campo novo for
   adicionado nas próximas etapas — o record continua 100% aditivo, só a
   forma de construí-lo ganhou um atalho extra.
+
+### Etapa 3 — Hierarquia de processo
+- Arquivos: `document/entity/MacroprocessoEntity.java`,
+  `document/repository/IMacroprocessoRepository.java` (novos);
+  `db/migration/V10__create_macroprocesso_e_hierarquia.sql` (novo, tabela
+  `macroprocesso` + `macroprocesso_id`/`processo_pai_id` em `documento`,
+  FK de `processo_pai_id` com `ON DELETE SET NULL`);
+  `document/entity/DocumentoEntity.java` (2 campos novos);
+  `document/dto/DocumentoResponseDTO.java` (+2 campos no construtor
+  canônico, compat constructor atualizado); `document/service/DocumentoService.java`
+  (`validarHierarquiaProcesso` — rejeita auto-referência e ciclo, ainda
+  sem nenhum chamador em produção, pronta pra Etapa 13; `listar`/`toResponseDTO`
+  agora ignoram `processoPaiId` quando o pai está soft-deletado, em lote
+  pra evitar N+1); testes novos em `DocumentoServiceTest`;
+  `document/repository/IMacroprocessoRepositoryTest.java` (novo).
+- Testes novos: 8 (`validarHierarquiaProcesso`: nulo não consulta banco,
+  rejeita auto-referência, rejeita ciclo direto, rejeita ciclo indireto
+  [A→B→C→A], aceita hierarquia válida sem ciclo; `buscarPorId`/`listar`:
+  pai soft-deletado nunca aparece na resposta; repositório de
+  macroprocesso: salva e encontra).
+- Suíte completa (execução real): **120/120 passando, 0 skipped, 0 falhas,
+  0 erros** (era 112 — aumentou 8, consistente).
+- Desvios do plano: nenhum.

@@ -13,6 +13,7 @@ import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -182,6 +184,109 @@ class DocumentoServiceTest {
 
         assertThatThrownBy(() -> documentoService.buscarPorId(id))
                 .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void validarHierarquiaProcessoAceitaNuloSemConsultarOBanco() {
+        documentoService.validarHierarquiaProcesso(UUID.randomUUID(), null);
+
+        verifyNoInteractions(documentoRepository);
+    }
+
+    @Test
+    void validarHierarquiaProcessoRejeitaAutoReferencia() {
+        UUID id = UUID.randomUUID();
+
+        assertThatThrownBy(() -> documentoService.validarHierarquiaProcesso(id, id))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void validarHierarquiaProcessoRejeitaCicloDireto() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        DocumentoEntity docB = documentoExistente(b, 1, "hash-b");
+        docB.setProcessoPaiId(a);
+
+        when(documentoRepository.findById(b)).thenReturn(Optional.of(docB));
+
+        // Tentando setar A como filho de B, quando B já é filho de A — formaria um ciclo.
+        assertThatThrownBy(() -> documentoService.validarHierarquiaProcesso(a, b))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void validarHierarquiaProcessoRejeitaCicloIndireto() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID c = UUID.randomUUID();
+
+        DocumentoEntity docC = documentoExistente(c, 1, "hash-c");
+        docC.setProcessoPaiId(b);
+        DocumentoEntity docB = documentoExistente(b, 1, "hash-b");
+        docB.setProcessoPaiId(a);
+
+        when(documentoRepository.findById(c)).thenReturn(Optional.of(docC));
+        when(documentoRepository.findById(b)).thenReturn(Optional.of(docB));
+
+        // A → B → C já existe; setar C como pai de A formaria um ciclo A→B→C→A.
+        assertThatThrownBy(() -> documentoService.validarHierarquiaProcesso(a, c))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void validarHierarquiaProcessoAceitaHierarquiaValidaSemCiclo() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+
+        DocumentoEntity docB = documentoExistente(b, 1, "hash-b");
+        // docB não tem pai — cadeia termina aí, sem ciclo.
+
+        when(documentoRepository.findById(b)).thenReturn(Optional.of(docB));
+
+        documentoService.validarHierarquiaProcesso(a, b);
+        // Não lança exceção.
+    }
+
+    @Test
+    void buscarPorIdNaoExpoeProcessoPaiQuandoEleEstaSoftDeletado() {
+        UUID id = UUID.randomUUID();
+        UUID paiId = UUID.randomUUID();
+
+        DocumentoEntity existente = documentoExistente(id, 1, "hash-filho");
+        existente.setProcessoPaiId(paiId);
+
+        DocumentoEntity pai = documentoExistente(paiId, 1, "hash-pai");
+        pai.setDeletado(true);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+        when(documentoRepository.findById(paiId)).thenReturn(Optional.of(pai));
+
+        DocumentoResponseDTO response = documentoService.buscarPorId(id);
+
+        assertThat(response.processoPaiId()).isNull();
+    }
+
+    @Test
+    void listarNaoExpoeProcessoPaiQuandoEleEstaSoftDeletado() {
+        UUID id = UUID.randomUUID();
+        UUID paiId = UUID.randomUUID();
+
+        DocumentoEntity existente = documentoExistente(id, 1, "hash-filho");
+        existente.setProcessoPaiId(paiId);
+
+        DocumentoEntity pai = documentoExistente(paiId, 1, "hash-pai");
+        pai.setDeletado(true);
+
+        when(documentoRepository.findByDeletadoFalseOrderByTituloAsc()).thenReturn(List.of(existente));
+        when(documentoRepository.findAllById(List.of(paiId))).thenReturn(List.of(pai));
+        when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+
+        List<DocumentoResponseDTO> resposta = documentoService.listar(null);
+
+        assertThat(resposta).hasSize(1);
+        assertThat(resposta.get(0).processoPaiId()).isNull();
     }
 
     private DocumentoEntity documentoExistente(UUID id, int versaoAtual, String hash) {

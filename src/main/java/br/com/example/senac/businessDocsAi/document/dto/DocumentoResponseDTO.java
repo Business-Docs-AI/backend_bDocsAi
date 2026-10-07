@@ -31,7 +31,11 @@ public record DocumentoResponseDTO(
         LocalDate proximaRevisao,
         Integer periodicidadeRevisaoMeses,
         Confidencialidade confidencialidade,
-        List<String> tags
+        List<String> tags,
+        // Hierarquia de processo (Etapa 3) — processoPaiId vem null se o pai estiver
+        // soft-deletado (nunca expõe um vínculo "fantasma").
+        Long macroprocessoId,
+        UUID processoPaiId
 ) {
     // Construtor de compatibilidade com a assinatura anterior (sem os metadados da Etapa 2)
     // — evita reescrever todo call site existente que ainda não precisa desses campos. Novo
@@ -52,7 +56,8 @@ public record DocumentoResponseDTO(
         this(
                 id, titulo, conteudoHtml, versaoAtual, statusIndexacao, criadoPor, criadoEm, atualizadoPor,
                 atualizadoEm, categoriaId, categoriaNome,
-                null, null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, null, null,
+                null, null
         );
     }
 }

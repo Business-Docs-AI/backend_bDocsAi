@@ -102,4 +102,13 @@ public class DocumentoEntity {
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "tags", columnDefinition = "text[]")
     private List<String> tags;
+
+    // Hierarquia de processo (migration V10) — complementar à categoria (área dona), que
+    // continua sendo o único controle de acesso. Ver DocumentoService.validarHierarquiaProcesso
+    // (auto-referência/ciclo) — nenhum caminho de hoje seta estes dois campos ainda.
+    @Column(name = "macroprocesso_id")
+    private Long macroprocessoId;
+
+    @Column(name = "processo_pai_id")
+    private UUID processoPaiId;
 }

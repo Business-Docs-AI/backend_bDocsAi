@@ -15,6 +15,7 @@ import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
 import lombok.RequiredArgsConstructor;
@@ -31,11 +32,16 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class DocumentoService {
+
+    private static final int PROFUNDIDADE_MAXIMA_HIERARQUIA = 50;
 
     private final IDocumentoRepository documentoRepository;
     private final IDocumentoVersaoRepository documentoVersaoRepository;
@@ -121,9 +127,19 @@ public class DocumentoService {
                 .toList();
 
         Map<Long, String> nomesCategorias = carregarNomesCategorias(acessiveis);
+        Set<UUID> idsDeProcessoPaiVisiveis = carregarIdsDeProcessoPaiVisiveis(acessiveis);
 
         return acessiveis.stream()
-                .map(documento -> toResponseDTO(documento, nomesCategorias.get(documento.getCategoriaId())))
+                .map(documento -> {
+                    UUID processoPaiVisivel = documento.getProcessoPaiId() != null
+                            && idsDeProcessoPaiVisiveis.contains(documento.getProcessoPaiId())
+                            ? documento.getProcessoPaiId()
+                            : null;
+
+                    return montarResponseDTO(
+                            documento, nomesCategorias.get(documento.getCategoriaId()), processoPaiVisivel
+                    );
+                })
                 .toList();
     }
 
@@ -210,6 +226,34 @@ public class DocumentoService {
         eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
     }
 
+    // Valida um vínculo de hierarquia de processo ANTES de aplicá-lo a um documento —
+    // rejeita auto-referência e qualquer ciclo (A→B→A). Reaproveitada pela Etapa 13 ao
+    // aplicar metadados estruturados; nenhum caminho hoje seta processoPaiId ainda, então
+    // não há chamador em produção nesta etapa.
+    public void validarHierarquiaProcesso(UUID documentoId, UUID novoProcessoPaiId) {
+        if (novoProcessoPaiId == null) {
+            return;
+        }
+
+        if (novoProcessoPaiId.equals(documentoId)) {
+            throw new BadRequestException("Um documento não pode ser pai de si mesmo.");
+        }
+
+        UUID atual = novoProcessoPaiId;
+        for (int i = 0; i < PROFUNDIDADE_MAXIMA_HIERARQUIA; i++) {
+            DocumentoEntity pai = documentoRepository.findById(atual).orElse(null);
+            if (pai == null || pai.getProcessoPaiId() == null) {
+                return;
+            }
+            if (pai.getProcessoPaiId().equals(documentoId)) {
+                throw new BadRequestException("Esse vínculo de hierarquia formaria um ciclo.");
+            }
+            atual = pai.getProcessoPaiId();
+        }
+
+        throw new BadRequestException("Hierarquia de processo excede a profundidade máxima permitida.");
+    }
+
     // Compartilhado por atualizar/restaurar: incrementa a versão vigente, grava o histórico
     // e dispara a reindexação. Criação não passa por aqui pois a versão 1 não "incrementa" nada.
     private void aplicarNovaVersao(
@@ -293,6 +337,13 @@ public class DocumentoService {
     }
 
     private DocumentoResponseDTO toResponseDTO(DocumentoEntity documento, String categoriaNome) {
+        UUID processoPaiVisivel = resolverProcessoPaiVisivel(documento.getProcessoPaiId());
+        return montarResponseDTO(documento, categoriaNome, processoPaiVisivel);
+    }
+
+    private DocumentoResponseDTO montarResponseDTO(
+            DocumentoEntity documento, String categoriaNome, UUID processoPaiVisivel
+    ) {
         return new DocumentoResponseDTO(
                 documento.getId(),
                 documento.getTitulo(),
@@ -313,8 +364,39 @@ public class DocumentoService {
                 documento.getProximaRevisao(),
                 documento.getPeriodicidadeRevisaoMeses(),
                 documento.getConfidencialidade(),
-                documento.getTags()
+                documento.getTags(),
+                documento.getMacroprocessoId(),
+                processoPaiVisivel
         );
+    }
+
+    // Um pai soft-deletado nunca é exposto como vínculo válido — ver DocumentoEntity.processoPaiId.
+    private UUID resolverProcessoPaiVisivel(UUID processoPaiId) {
+        if (processoPaiId == null) {
+            return null;
+        }
+        return documentoRepository.findById(processoPaiId)
+                .filter(pai -> !pai.isDeletado())
+                .map(DocumentoEntity::getId)
+                .orElse(null);
+    }
+
+    // Mesma regra de resolverProcessoPaiVisivel, só que em lote — evita N+1 ao listar.
+    private Set<UUID> carregarIdsDeProcessoPaiVisiveis(List<DocumentoEntity> documentos) {
+        List<UUID> paisReferenciados = documentos.stream()
+                .map(DocumentoEntity::getProcessoPaiId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+
+        if (paisReferenciados.isEmpty()) {
+            return Set.of();
+        }
+
+        return documentoRepository.findAllById(paisReferenciados).stream()
+                .filter(pai -> !pai.isDeletado())
+                .map(DocumentoEntity::getId)
+                .collect(Collectors.toSet());
     }
 
     private Map<Long, String> carregarNomesCategorias(List<DocumentoEntity> documentos) {
