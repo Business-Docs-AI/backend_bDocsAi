@@ -55,7 +55,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 2 | Metadados escalares em `documento` | ✅ concluída |
 | 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ✅ concluída |
 | 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ✅ concluída |
-| 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ⏳ pendente |
+| 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ✅ concluída |
 | 6 | Áreas participantes (join table informativa) | ⏳ pendente |
 | 7 | Conteúdo estruturado versionável (jsonb) | ⏳ pendente |
 | 8 | DTOs estruturados + validação (Bean + semântica) | ⏳ pendente |
@@ -256,4 +256,19 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   contexto com a flag ligada).
 - Suíte completa (execução real): **139/139 passando, 0 skipped, 0 falhas,
   0 erros** (era 120 — aumentou 19, consistente).
+- Desvios do plano: nenhum.
+
+### Etapa 5 — Endpoint ADMIN de mudança de `status_ciclo_vida`
+- Arquivos: `document/dto/AtualizarStatusCicloVidaRequestDTO.java` (novo);
+  `document/service/DocumentoService.java` (`atualizarStatusCicloVida` —
+  troca direta, sem fluxo de aprovação, atualiza só `atualizado_por`/`atualizado_em`,
+  NÃO versiona conteúdo, NÃO dispara reindexação ainda — isso é da Etapa 17);
+  `document/controller/DocumentoStatusCicloVidaController.java` (novo,
+  `@ConditionalOnProperty` na flag, controller SEPARADO do `DocumentoController`
+  existente — zero linhas tocadas nele); testes novos.
+- Testes novos: 5 (service: troca o status, atualiza metadados, não
+  versiona nem reindexa; controller: 403 USUARIO/EDITOR, 200 ADMIN com a
+  flag ligada; 404 com a flag desligada).
+- Suíte completa (execução real): **144/144 passando, 0 skipped, 0 falhas,
+  0 erros** (era 139 — aumentou 5, consistente).
 - Desvios do plano: nenhum.

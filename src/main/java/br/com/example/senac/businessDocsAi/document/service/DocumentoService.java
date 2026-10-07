@@ -168,6 +168,26 @@ public class DocumentoService {
         return toResponseDTO(documento);
     }
 
+    // Sem fluxo de aprovação (EM_ELABORACAO→EM_REVISAO→VIGENTE→OBSOLETO) — adiado de
+    // propósito, ver docs/plano-documentacao-estruturada.md. Troca direta, sem validação de
+    // transição. É uma mudança só de metadado: não versiona conteúdo, só atualiza
+    // atualizado_por/atualizado_em. O gatilho de reindexação por essa mudança é da Etapa 17
+    // — não disparado ainda aqui, de propósito (esta etapa só introduz o caminho em si).
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public DocumentoResponseDTO atualizarStatusCicloVida(UUID id, StatusCicloVida novoStatus) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+
+        documento.setStatusCicloVida(novoStatus);
+        documento.setAtualizadoPor(currentUserProvider.getCurrentUserName());
+        documento.setAtualizadoEm(LocalDateTime.now());
+        documentoRepository.save(documento);
+
+        return toResponseDTO(documento);
+    }
+
     @PreAuthorize("hasRole('ADMIN')")
     @Transactional
     public void excluir(UUID id) {

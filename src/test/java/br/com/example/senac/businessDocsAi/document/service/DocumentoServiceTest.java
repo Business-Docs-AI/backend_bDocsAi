@@ -289,6 +289,25 @@ class DocumentoServiceTest {
         assertThat(resposta.get(0).processoPaiId()).isNull();
     }
 
+    @Test
+    void atualizarStatusCicloVidaTrocaOStatusEAtualizaMetadadosSemVersionar() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity existente = documentoExistente(id, 1, "hash-qualquer");
+        existente.setStatusCicloVida(StatusCicloVida.VIGENTE);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+        when(currentUserProvider.getCurrentUserName()).thenReturn("Admin Teste");
+
+        DocumentoResponseDTO resposta = documentoService.atualizarStatusCicloVida(id, StatusCicloVida.OBSOLETO);
+
+        assertThat(resposta.statusCicloVida()).isEqualTo(StatusCicloVida.OBSOLETO);
+        assertThat(existente.getAtualizadoPor()).isEqualTo("Admin Teste");
+        assertThat(existente.getAtualizadoEm()).isNotNull();
+        assertThat(existente.getVersaoAtual()).isEqualTo(1);
+        verify(documentoVersaoRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
     private DocumentoEntity documentoExistente(UUID id, int versaoAtual, String hash) {
         DocumentoEntity documento = new DocumentoEntity();
         documento.setId(id);
