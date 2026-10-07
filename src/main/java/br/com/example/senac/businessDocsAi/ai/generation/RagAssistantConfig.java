@@ -5,6 +5,7 @@ import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessSer
 import br.com.example.senac.businessDocsAi.categories.tool.CategoriaTools;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.tool.DocumentoTools;
+import br.com.example.senac.businessDocsAi.document.tool.MacroprocessoTools;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
@@ -23,7 +24,9 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Configuration
@@ -156,19 +159,29 @@ public class RagAssistantConfig {
     // documento. Nenhuma delas grava direto — DocumentoTools só efetiva a escrita depois de
     // confirmação num turno posterior (ver DocumentoTools/ConversaContextHolder). Sem
     // ferramenta nenhuma de excluir/restaurar/reindexar.
+    //
+    // MacroprocessoTools (e, a partir da Etapa 13, a tool de documento estruturado) só
+    // existem como bean com a feature flag ligada — por isso a injeção é Optional aqui: sem
+    // isso, o Spring falharia ao montar este bean com a flag desligada (NoSuchBeanDefinition).
+    // Flag é lida só no startup — mudar em runtime não tem efeito até reiniciar (os beans de
+    // AiServices são montados uma vez).
     @Bean
     public RagAssistant ragAssistantComFerramentas(
             ChatModel chatModel,
             RetrievalAugmentor retrievalAugmentor,
             ChatMemoryProvider chatMemoryProvider,
             DocumentoTools documentoTools,
-            CategoriaTools categoriaTools
+            CategoriaTools categoriaTools,
+            Optional<MacroprocessoTools> macroprocessoToolsOpt
     ) {
+        List<Object> tools = new ArrayList<>(List.of(documentoTools, categoriaTools));
+        macroprocessoToolsOpt.ifPresent(tools::add);
+
         return AiServices.builder(RagAssistant.class)
                 .chatModel(chatModel)
                 .retrievalAugmentor(retrievalAugmentor)
                 .chatMemoryProvider(chatMemoryProvider)
-                .tools(documentoTools, categoriaTools)
+                .tools(tools.toArray())
                 .systemMessageProvider(memoryId -> RagSystemPrompt.TEXTO_COM_FERRAMENTAS)
                 .build();
     }

@@ -54,7 +54,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 1 | Feature flag `documentacao-estruturada` | ✅ concluída |
 | 2 | Metadados escalares em `documento` | ✅ concluída |
 | 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ✅ concluída |
-| 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ⏳ pendente |
+| 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ✅ concluída |
 | 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ⏳ pendente |
 | 6 | Áreas participantes (join table informativa) | ⏳ pendente |
 | 7 | Conteúdo estruturado versionável (jsonb) | ⏳ pendente |
@@ -229,4 +229,31 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   macroprocesso: salva e encontra).
 - Suíte completa (execução real): **120/120 passando, 0 skipped, 0 falhas,
   0 erros** (era 112 — aumentou 8, consistente).
+- Desvios do plano: nenhum.
+
+### Etapa 4 — Macroprocesso (tool de listagem + CRUD ADMIN)
+- Arquivos: `document/dto/MacroprocessoRequestDTO.java`,
+  `MacroprocessoResponseDTO.java`, `document/service/MacroprocessoService.java`,
+  `document/controller/MacroprocessoController.java` (`@ConditionalOnProperty`
+  na flag — sem ela, a rota não existe), `document/tool/MacroprocessoTools.java`
+  (idem, só leitura — criar macroprocesso não é feito pelo chat, decisão C2c);
+  `ai/generation/RagAssistantConfig.java` (`ragAssistantComFerramentas` agora
+  recebe `Optional<MacroprocessoTools>`, adicionado à lista de tools só
+  quando presente); testes novos em `MacroprocessoServiceTest`,
+  `MacroprocessoControllerSecurityTest` (flag ligada via
+  `@TestPropertySource`), `MacroprocessoControllerDesligadoPorDefaultTest`
+  (flag no default — rota dá 404), `MacroprocessoToolsTest`,
+  `ContextLoadsComFlagDocumentacaoEstruturadaLigadaTest` (contexto completo
+  sobe sem erro também com a flag ligada, não só desligada).
+- Exclusão de macroprocesso em uso: nenhum código novo necessário — a FK
+  `fk_documento_macroprocesso` (sem `ON DELETE`, logo `RESTRICT`) mais o
+  `GlobalExceptionHandler` já existente (que já mapeia
+  `DataIntegrityViolationException` para 409) cobrem a decisão A4 de
+  graça.
+- Testes novos: 19 (6 no service — listar, buscarPorId 404, criar,
+  atualizar 404, excluir 404, excluir ok; 9 na matriz de segurança do
+  controller; 1 confirmando 404 com a flag desligada; 2 na tool; 1 de
+  contexto com a flag ligada).
+- Suíte completa (execução real): **139/139 passando, 0 skipped, 0 falhas,
+  0 erros** (era 120 — aumentou 19, consistente).
 - Desvios do plano: nenhum.
