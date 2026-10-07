@@ -45,3 +45,12 @@ app:
     # A partir de quantos caracteres uma mensagem colada no chat é considerada "texto
     # grande" e convertida para Markdown antes de ser salva (ver MarkdownConversorService).
     limite-caracteres-texto-grande: ${CHAT_LIMITE_CARACTERES_TEXTO_GRANDE:2000}
+
+bdocs:
+  documentacao-estruturada:
+    # Com false (default), o sistema se comporta exatamente como antes desta entrega —
+    # ver FeatureFlags e docs/plano-documentacao-estruturada.md.
+    enabled: ${DOCUMENTACAO_ESTRUTURADA_ENABLED:false}
+    # Provedores de chat em que o caminho de documento estruturado fica disponível
+    # (decisão A3: nunca fixo no código, sempre configurável).
+    provedores: ${DOCUMENTACAO_ESTRUTURADA_PROVEDORES:gemini,anthropic}

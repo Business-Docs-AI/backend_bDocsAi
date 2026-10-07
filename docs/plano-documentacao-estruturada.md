@@ -31,12 +31,27 @@ estruturada fica disponível (decisão A3).
 **Nota de operação (B4)**: antes de ligar `bdocs.rag.filtros-ciclo-vida.enabled`
 em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 
+## Decisões de modelagem originais (1–12, aprovadas antes do plano)
+
+1. **STATUS**: campo novo `status_ciclo_vida` (`EM_ELABORACAO | EM_REVISAO | VIGENTE | OBSOLETO`) — **não** toca `status_indexacao` (semântica diferente, é sobre indexação). **Não** usa o valor "RASCUNHO" (confundiria com `documento_rascunho`, que continua significando proposta da IA pendente de confirmação). Documentos existentes → `VIGENTE` via migration. Documentos confirmados pelo fluxo atual de chat → `VIGENTE` (preserva o comportamento de hoje). Fluxo de revisão/aprovação fica para o futuro (ver "Explicitamente adiado").
+2. **TIPO**: campo novo `tipo_documento` (`POLITICA | PROCESSO | PROCEDIMENTO | INSTRUCAO | REGISTRO | NAO_CLASSIFICADO`). Existentes → `NAO_CLASSIFICADO`.
+3. **CATEGORIA = ÁREA DONA**: nenhuma entidade "área" nova — `categoria_id` já é a área dona e continua sendo o **único** controle de acesso (`CategoriaAccessService` não muda). `areas_participantes`: tabela N:N documento↔categoria, **apenas informativa** — nunca concede acesso em hipótese alguma.
+4. **HIERARQUIA**: tabela nova `macroprocesso` (`id`, `nome`, `descricao`) + FK nullable `macroprocesso_id` em `documento`; `processo_pai_id` nullable em `documento`, autorreferenciando `documento`.
+5. **ARMAZENAMENTO**: colunas nullable em `documento` para os metadados filtráveis (`tipo`, `status_ciclo_vida`, `macroprocesso_id`, `processo_pai_id`, `dono_processo`, `aprovador`, `data_vigencia`, `proxima_revisao`, `periodicidade_revisao`, `confidencialidade`, `tags`). Conteúdo estruturado em `conteudo_estruturado` (jsonb, nullable) + `versao_schema`, nas tabelas `documento`, `documento_versao` e `documento_rascunho`, versionado/restaurado junto com o HTML. Etapas/regras/exceções/RACI ficam dentro do jsonb, sem tabelas relacionais por enquanto. `conteudo_html` continua obrigatório e sempre preenchido.
+6. **SAÍDA ESTRUTURADA**: como a geração acontece via `@Tool`, tool **nova** (`prepararCriacaoDocumentoEstruturado`/`...Atualizacao...`) recebendo um POJO/record (langchain4j gera o schema), registrada só com a flag ligada — as tools atuais continuam existindo e funcionando sem alteração. Validação do objeto no servidor (Bean Validation). HTML renderizado no **servidor**, de forma determinística, a partir do JSON (com `h2`/`h3` compatíveis com `HtmlSectionSplitter`), passando pelo `HtmlSanitizerService` como hoje. Fluxo propor → confirmar em turno separado mantido. Avaliar se `maxTokens(8192)` comporta um documento completo (Etapa 11). Verificar function calling com POJO aninhado nos 3 provedores (Etapa 10) — se algum não suportar, a flag não ativa o caminho novo para esse provedor.
+7. **RAG**: adicionar `categoria_id`, `tipo_documento`, `status_ciclo_vida`, `macroprocesso_id`, `confidencialidade` (+ ID do item atômico quando houver) aos metadados do chunk. Filtro ANTES da busca (`Filter` do langchain4j sobre as colunas), **mantendo** o filtro pós-busca atual como rede de segurança. Chunks sem o metadado `status_ciclo_vida` (legados) tratados como `VIGENTE` — nenhum documento atual pode sumir do RAG. Mudança de categoria/status/confidencialidade dispara reindexação. Reindexação em massa só manual/opt-in, nunca automática. Confidencialidade: só metadado + filtro preparado nesta entrega, sem regra de acesso nova.
+8. **DIAGRAMA**: Mermaid aprovado como dependência do frontend, mas como **última** etapa do plano. Backend gera o texto Mermaid a partir das etapas.
+9. **GOVERNANÇA**: sem e-mail. Só cálculo de `proxima_revisao`, indicador visual de "revisão vencida" na UI e filtro de listagem. `pendencias[]` visíveis no documento.
+10. **FORA DO ESCOPO**: pacotes `conversation` e `uploadFiles` (legado, desconectado), `permission_id` do usuário.
+11. **CI**: workflow do GitHub Actions rodando testes com Postgres+pgvector como service — Etapa 0, concluída.
+12. **FEATURE FLAG**: propriedade única `bdocs.documentacao-estruturada.enabled` (default `false`). Com a flag desligada, o sistema se comporta **exatamente** como hoje (migrations aplicadas, sem efeito funcional).
+
 ## Índice das etapas
 
 | # | Etapa | Status |
 |---|---|---|
 | 0 | CI (workflow Postgres+pgvector) | ✅ concluída |
-| 1 | Feature flag `documentacao-estruturada` | ⏳ pendente |
+| 1 | Feature flag `documentacao-estruturada` | ✅ concluída |
 | 2 | Metadados escalares em `documento` | ⏳ pendente |
 | 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ⏳ pendente |
 | 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ⏳ pendente |
@@ -94,6 +109,30 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 - **C1**: ordem do RAG trocada para metadados (14) → reindexação em massa
   (15) → filtro (16), para nunca excluir chunk legado sem metadado do
   acervo durante a transição.
+- **C2**: metadados precisam de caminho de entrada —
+  (a) o DTO estruturado (Etapa 8) tem um bloco de metadados
+  (`tipoDocumento`, `macroprocessoId`, `processoPaiId`,
+  `areasParticipantes[]`, `donoProcesso`, `aprovador`,
+  `periodicidadeRevisao`, `confidencialidade`, `tags`);
+  (b) esses metadados viajam no `conteudo_estruturado` do rascunho e são
+  aplicados às colunas de `documento` em `confirmarRascunhoPendente`
+  (Etapa 13), validando que os IDs existem e que o usuário tem acesso à
+  categoria (área dona — acesso completo; áreas participantes — só
+  existência do ID, por serem informativas);
+  (c) macroprocesso: tool `listarMacroprocessos` (padrão de
+  `listarMinhasCategorias`) + CRUD ADMIN simples (Etapa 4) — caminho
+  escolhido por ser o menos intrusivo (sem fluxo de proposta/confirmação
+  pelo chat, que exigiria uma tabela de rascunho nova só pra isso);
+  (d) mudança de status: endpoint ADMIN (Etapa 5), não tool de chat —
+  gatilho necessário pra Etapa 17 ter o que acionar.
+- **C3**: consistência JSON×HTML — se um documento com
+  `conteudo_estruturado` for atualizado pelo fluxo legado de HTML, a nova
+  versão grava `conteudo_estruturado = NULL` (o JSON antigo permanece só
+  na versão anterior). Essa regra cobre os DOIS caminhos: `atualizar()`
+  (REST) e `confirmarRascunhoPendente` de um rascunho ATUALIZAR sem
+  estruturado (chat legado) — teste obrigatório nos dois. `restaurarVersao`
+  também restaura `conteudo_estruturado`/`versao_schema` da versão
+  escolhida.
 - **C4**: a mesma regra "vigente por padrão, sem metadado = vigente" vale
   também em `PesquisaService` (endpoint `/documentos/busca`), não só no
   RAG do chat.
@@ -131,3 +170,16 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   [37251793303](https://github.com/Business-Docs-AI/backend_bDocsAi/actions/runs/37251793303).
 - Desvio do plano: 1 commit extra de correção (`fa3cc75`) além do
   commit principal da etapa, por causa do bug de permissão do `gradlew`.
+
+### Etapa 1 — Feature flag
+- Arquivos: `config/FeatureFlags.java` (novo), `config/FeatureFlagsTest.java` (novo),
+  `application.yaml` (`bdocs.documentacao-estruturada.enabled` +
+  `bdocs.documentacao-estruturada.provedores`), `docs/plano-documentacao-estruturada.md`
+  (completado com as 12 decisões originais + C2/C3, e este log).
+- Testes novos: 4 (`FeatureFlagsTest`: default desligada/sem provedores,
+  ligada sem provedor na lista, parse de lista separada por vírgula
+  ignorando espaço/maiúscula, provedor nulo nunca habilita).
+- Suíte completa (execução real, `./gradlew test --no-daemon --rerun-tasks`):
+  **110/110 passando, 0 skipped, 0 falhas, 0 erros** (era 106 — aumentou 4,
+  consistente com os testes novos).
+- Desvios do plano: nenhum.
