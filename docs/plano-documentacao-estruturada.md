@@ -56,7 +56,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ✅ concluída |
 | 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ✅ concluída |
 | 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ✅ concluída |
-| 6 | Áreas participantes (join table informativa) | ⏳ pendente |
+| 6 | Áreas participantes (join table informativa) | ✅ concluída |
 | 7 | Conteúdo estruturado versionável (jsonb) | ⏳ pendente |
 | 8 | DTOs estruturados + validação (Bean + semântica) | ⏳ pendente |
 | 9 | Renderizador HTML determinístico | ⏳ pendente |
@@ -272,3 +272,27 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 - Suíte completa (execução real): **144/144 passando, 0 skipped, 0 falhas,
   0 erros** (era 139 — aumentou 5, consistente).
 - Desvios do plano: nenhum.
+
+### Etapa 6 — Áreas participantes (join table informativa)
+- Arquivos: `db/migration/V11__create_documento_area_participante.sql`
+  (novo, FK de `documento_id` com `ON DELETE CASCADE`, FK de
+  `categoria_id` padrão/`RESTRICT`, `UNIQUE(documento_id, categoria_id)`);
+  `document/entity/DocumentoAreaParticipanteEntity.java`,
+  `document/repository/IDocumentoAreaParticipanteRepository.java` (novos);
+  `categories/service/CategoriaAccessServiceTest.java` (novo — não
+  existia nenhum teste direto dessa classe antes; vira a linha de base
+  explícita de que o controle de acesso não muda);
+  `document/repository/IDocumentoAreaParticipanteRepositoryTest.java` (novo).
+- Testes novos: 7 (2 no repositório — salva/encontra por documento,
+  `deleteByDocumentoId` remove todos os vínculos; 5 em
+  `CategoriaAccessServiceTest` — admin irrestrito, usuário com/sem
+  categoria vinculada, `validarAcessoCategoria` lança `AccessDeniedException`,
+  e o teste de regressão explícito provando que uma área participante
+  não altera o resultado de acesso).
+- Suíte completa (execução real): **151/151 passando, 0 skipped, 0 falhas,
+  0 erros** (era 144 — aumentou 7, consistente).
+- Desvios do plano: nenhum. Nota: a "prova" de que área participante
+  não afeta acesso é estrutural, não só comportamental —
+  `CategoriaAccessService` nem recebe `IDocumentoAreaParticipanteRepository`
+  no construtor, então não há caminho de código algum por onde essa
+  tabela poderia influenciar o resultado.
