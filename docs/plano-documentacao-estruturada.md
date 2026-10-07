@@ -52,7 +52,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 |---|---|---|
 | 0 | CI (workflow Postgres+pgvector) | ✅ concluída |
 | 1 | Feature flag `documentacao-estruturada` | ✅ concluída |
-| 2 | Metadados escalares em `documento` | ⏳ pendente |
+| 2 | Metadados escalares em `documento` | ✅ concluída |
 | 3 | Hierarquia de processo (`macroprocesso` + `processo_pai_id`) | ⏳ pendente |
 | 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ⏳ pendente |
 | 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ⏳ pendente |
@@ -183,3 +183,27 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   **110/110 passando, 0 skipped, 0 falhas, 0 erros** (era 106 — aumentou 4,
   consistente com os testes novos).
 - Desvios do plano: nenhum.
+
+### Etapa 2 — Metadados escalares em `documento`
+- Arquivos: `document/entity/TipoDocumento.java`, `StatusCicloVida.java`,
+  `Confidencialidade.java` (novos enums); `db/migration/V9__add_metadados_processo_documento.sql`
+  (novo); `document/entity/DocumentoEntity.java` (9 campos novos nullable);
+  `document/dto/DocumentoResponseDTO.java` (9 campos novos no construtor canônico +
+  construtor de compatibilidade com a assinatura antiga, pra não reescrever os 4 call
+  sites de teste existentes a cada etapa que adicionar campo); `document/service/DocumentoService.java`
+  (`criar()` seta `tipoDocumento`/`statusCicloVida` explicitamente — o Hibernate manda NULL
+  pra campo não setado, o que bypassaria o `DEFAULT` do banco; `toResponseDTO` repassa os
+  campos novos); `document/service/DocumentoServiceTest.java` (+1 teste);
+  `document/entity/DocumentoMetadadosDefaultTest.java` (novo, `@SpringBootTest`, confirma o
+  `DEFAULT` da migration via INSERT bruto por `JdbcTemplate`).
+- Testes novos: 2 (`criarDeveDefinirTipoDocumentoNaoClassificadoEStatusCicloVidaVigentePorDefault`;
+  `insertBrutoSemMencionarAsColunasNovasRecebeOsDefaultsDaMigrationV9`).
+- Suíte completa (execução real): **112/112 passando, 0 skipped, 0 falhas,
+  0 erros** (era 110 — aumentou 2, consistente).
+- Desvios do plano: nenhum. Decisão de implementação não detalhada no
+  plano original: `DocumentoResponseDTO` ganhou um construtor de
+  compatibilidade (assinatura de 11 argumentos, preenchendo os campos
+  novos com `null`) além do canônico, para não precisar reescrever os
+  call sites de teste existentes toda vez que um campo novo for
+  adicionado nas próximas etapas — o record continua 100% aditivo, só a
+  forma de construí-lo ganhou um atalho extra.

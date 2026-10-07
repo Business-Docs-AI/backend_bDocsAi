@@ -6,7 +6,9 @@ import br.com.example.senac.businessDocsAi.document.dto.DocumentoRequestDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoVersaoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
+import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
@@ -70,6 +72,21 @@ class DocumentoServiceTest {
         lenient().when(currentUserProvider.getCurrentUserName()).thenReturn("Autor Teste");
         lenient().when(documentoRepository.save(any(DocumentoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(documentoVersaoRepository.save(any(DocumentoVersaoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    @Test
+    void criarDeveDefinirTipoDocumentoNaoClassificadoEStatusCicloVidaVigentePorDefault() {
+        DocumentoRequestDTO dto = new DocumentoRequestDTO("Título Novo", "<p>Conteúdo</p>", null, 1L);
+
+        ArgumentCaptor<DocumentoEntity> captor = ArgumentCaptor.forClass(DocumentoEntity.class);
+
+        documentoService.criar(dto);
+
+        verify(documentoRepository, atLeastOnce()).save(captor.capture());
+        DocumentoEntity salvo = captor.getAllValues().get(0);
+
+        assertThat(salvo.getTipoDocumento()).isEqualTo(TipoDocumento.NAO_CLASSIFICADO);
+        assertThat(salvo.getStatusCicloVida()).isEqualTo(StatusCicloVida.VIGENTE);
     }
 
     @Test

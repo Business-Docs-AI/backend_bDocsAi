@@ -8,7 +8,9 @@ import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoVersaoResponseDTO;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoVersaoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
+import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
@@ -63,6 +65,11 @@ public class DocumentoService {
         documento.setCriadoPor(autor);
         documento.setCriadoEm(LocalDateTime.now());
         documento.setDeletado(false);
+        // Explícito em Java porque o Hibernate manda NULL pra coluna não setada no objeto —
+        // isso bypassaria o DEFAULT do banco (migration V9). Preserva "documento confirmado
+        // pelo fluxo atual = vigente", o comportamento de hoje.
+        documento.setTipoDocumento(TipoDocumento.NAO_CLASSIFICADO);
+        documento.setStatusCicloVida(StatusCicloVida.VIGENTE);
 
         DocumentoEntity salvo = documentoRepository.save(documento);
 
@@ -297,7 +304,16 @@ public class DocumentoService {
                 documento.getAtualizadoPor(),
                 documento.getAtualizadoEm(),
                 documento.getCategoriaId(),
-                categoriaNome
+                categoriaNome,
+                documento.getTipoDocumento(),
+                documento.getStatusCicloVida(),
+                documento.getDonoProcesso(),
+                documento.getAprovador(),
+                documento.getDataVigencia(),
+                documento.getProximaRevisao(),
+                documento.getPeriodicidadeRevisaoMeses(),
+                documento.getConfidencialidade(),
+                documento.getTags()
         );
     }
 

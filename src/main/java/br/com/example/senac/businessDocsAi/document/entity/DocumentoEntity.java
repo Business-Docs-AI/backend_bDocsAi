@@ -11,8 +11,12 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -62,4 +66,40 @@ public class DocumentoEntity {
 
     @Column(name = "excluido_em")
     private LocalDateTime excluidoEm;
+
+    // Metadados de processo/governança (migration V9) — todos nullable, aditivos. Ver
+    // DocumentoService.criar(): os dois primeiros são setados explicitamente lá, porque o
+    // Hibernate envia NULL explícito para um campo não setado no objeto Java, o que
+    // bypassaria o DEFAULT do banco (o DEFAULT só vale pra inserts que omitem a coluna).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tipo_documento", length = 20)
+    private TipoDocumento tipoDocumento;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status_ciclo_vida", length = 20)
+    private StatusCicloVida statusCicloVida;
+
+    @Column(name = "dono_processo")
+    private String donoProcesso;
+
+    @Column(name = "aprovador")
+    private String aprovador;
+
+    @Column(name = "data_vigencia")
+    private LocalDate dataVigencia;
+
+    @Column(name = "proxima_revisao")
+    private LocalDate proximaRevisao;
+
+    // Em meses (ex.: 12 = revisão anual) — usado para calcular proximaRevisao (Etapa 17).
+    @Column(name = "periodicidade_revisao")
+    private Integer periodicidadeRevisaoMeses;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "confidencialidade", length = 20)
+    private Confidencialidade confidencialidade;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "tags", columnDefinition = "text[]")
+    private List<String> tags;
 }
