@@ -9,6 +9,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -47,4 +49,13 @@ public class DocumentoVersaoEntity {
 
     @Column(name = "comentario_alteracao", length = 1000)
     private String comentarioAlteracao;
+
+    // Snapshot do conteúdo estruturado DESTA versão (migration V12, decisão B3/C3) — NULL
+    // quando a versão foi gerada pelo fluxo legado de HTML. Ver DocumentoService.aplicarNovaVersao.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conteudo_estruturado", columnDefinition = "jsonb")
+    private String conteudoEstruturado;
+
+    @Column(name = "versao_schema", length = 20)
+    private String versaoSchema;
 }

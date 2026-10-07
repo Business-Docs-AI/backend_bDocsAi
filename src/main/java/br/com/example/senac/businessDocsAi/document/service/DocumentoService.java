@@ -79,7 +79,9 @@ public class DocumentoService {
 
         DocumentoEntity salvo = documentoRepository.save(documento);
 
-        registrarNovaVersao(salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1);
+        // Criação via DocumentoRequestDTO (fluxo legado) nunca carrega estruturado — fica
+        // null, como o campo já nasce (decisão C3/B3).
+        registrarNovaVersao(salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1, null, null);
 
         eventPublisher.publishEvent(new DocumentoAlteradoEvent(salvo.getId(), salvo.getVersaoAtual()));
 
@@ -106,7 +108,11 @@ public class DocumentoService {
             return toResponseDTO(documento);
         }
 
-        aplicarNovaVersao(documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao());
+        // Decisão C3: atualizar pelo fluxo LEGADO de HTML sempre invalida o conteúdo
+        // estruturado que o documento tivesse (null explícito) — o JSON antigo continua só
+        // na versão anterior, nunca é copiado pra frente por engano. DocumentoRequestDTO
+        // nunca carrega estruturado, então não há como preservar aqui mesmo que quisesse.
+        aplicarNovaVersao(documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao(), null, null);
 
         return toResponseDTO(documento);
     }
@@ -163,7 +169,13 @@ public class DocumentoService {
         }
 
         String comentario = "Restauração da versão " + numeroVersao;
-        aplicarNovaVersao(documento, versaoAlvo.getTitulo(), htmlSanitizado, novoHash, autor, comentario);
+        // Restaurar traz de volta o conteúdo estruturado DAQUELA versão (se ela tinha) —
+        // diferente de atualizar() pelo fluxo legado, aqui não é uma edição às cegas, é
+        // voltar pra um estado que já existiu, íntegro.
+        aplicarNovaVersao(
+                documento, versaoAlvo.getTitulo(), htmlSanitizado, novoHash, autor, comentario,
+                versaoAlvo.getConteudoEstruturado(), versaoAlvo.getVersaoSchema()
+        );
 
         return toResponseDTO(documento);
     }
@@ -276,13 +288,17 @@ public class DocumentoService {
 
     // Compartilhado por atualizar/restaurar: incrementa a versão vigente, grava o histórico
     // e dispara a reindexação. Criação não passa por aqui pois a versão 1 não "incrementa" nada.
+    // conteudoEstruturado/versaoSchema são decididos pelo CHAMADOR (decisão B3/C3) — este
+    // método só grava o que recebe, nunca decide sozinho se deve preservar ou invalidar.
     private void aplicarNovaVersao(
             DocumentoEntity documento,
             String titulo,
             String htmlSanitizado,
             String hash,
             String autor,
-            String comentario
+            String comentario,
+            String conteudoEstruturado,
+            String versaoSchema
     ) {
         int novaVersao = documento.getVersaoAtual() + 1;
 
@@ -293,10 +309,12 @@ public class DocumentoService {
         documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
         documento.setAtualizadoPor(autor);
         documento.setAtualizadoEm(LocalDateTime.now());
+        documento.setConteudoEstruturado(conteudoEstruturado);
+        documento.setVersaoSchema(versaoSchema);
 
         documentoRepository.save(documento);
 
-        registrarNovaVersao(documento, htmlSanitizado, autor, comentario, novaVersao);
+        registrarNovaVersao(documento, htmlSanitizado, autor, comentario, novaVersao, conteudoEstruturado, versaoSchema);
 
         eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), novaVersao));
     }
@@ -306,7 +324,9 @@ public class DocumentoService {
             String htmlSanitizado,
             String autor,
             String comentario,
-            int numeroVersao
+            int numeroVersao,
+            String conteudoEstruturado,
+            String versaoSchema
     ) {
         DocumentoVersaoEntity versao = new DocumentoVersaoEntity();
         versao.setDocumentoId(documento.getId());
@@ -317,6 +337,8 @@ public class DocumentoService {
         versao.setAutor(autor);
         versao.setCriadoEm(LocalDateTime.now());
         versao.setComentarioAlteracao(comentario);
+        versao.setConteudoEstruturado(conteudoEstruturado);
+        versao.setVersaoSchema(versaoSchema);
 
         documentoVersaoRepository.save(versao);
     }

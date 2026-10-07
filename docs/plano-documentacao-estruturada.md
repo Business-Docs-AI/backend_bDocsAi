@@ -57,7 +57,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 4 | Macroprocesso — tool de listagem + CRUD ADMIN | ✅ concluída |
 | 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ✅ concluída |
 | 6 | Áreas participantes (join table informativa) | ✅ concluída |
-| 7 | Conteúdo estruturado versionável (jsonb) | ⏳ pendente |
+| 7 | Conteúdo estruturado versionável (jsonb) | ✅ concluída |
 | 8 | DTOs estruturados + validação (Bean + semântica) | ⏳ pendente |
 | 9 | Renderizador HTML determinístico | ⏳ pendente |
 | 10 | Investigação: function calling com POJO aninhado | ⏳ pendente |
@@ -296,3 +296,46 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   `CategoriaAccessService` nem recebe `IDocumentoAreaParticipanteRepository`
   no construtor, então não há caminho de código algum por onde essa
   tabela poderia influenciar o resultado.
+
+## Verificações V1–V4 (antes da Etapa 7, 2026-10-07)
+
+Todas passaram. V1: só `DocumentoServiceTest.java` foi modificado entre
+arquivos de teste pré-existentes, 100% aditivo (confirmado via diff, sem
+nenhuma linha `-` de conteúdo de teste). V2: nenhuma migration existente
+tocada. V3: migrations V9-V11 aplicadas num banco de dev real com 12
+documentos pré-existentes (9 ativos) — todos ficaram com
+`tipo_documento='NAO_CLASSIFICADO'`/`status_ciclo_vida='VIGENTE'`, zero
+nulos, app/listagem/chat funcionando normalmente. V4: smoke test local
+com a flag ligada (CRUD de macroprocesso, 403/409, PATCH de status,
+tool `listarMacroprocessos` confirmada funcionando com IA real, fluxo
+normal de criação de documento inalterado) — flag desligada e
+`compose.yml` revertido ao final, sem nenhum commit dessa etapa de
+verificação.
+
+### Etapa 7 — Conteúdo estruturado versionável (jsonb)
+- Arquivos: `db/migration/V12__add_conteudo_estruturado.sql` (novo —
+  `conteudo_estruturado` jsonb + `versao_schema` nas 3 tabelas);
+  `DocumentoEntity`/`DocumentoVersaoEntity`/`RascunhoDocumentoEntity`
+  (2 campos novos cada); `DocumentoService` — métodos tocados:
+  `criar` (só a chamada a `registrarNovaVersao`, passando `null,null`),
+  `atualizar` (passa `null,null` pra `aplicarNovaVersao` — decisão C3,
+  invalida estruturado existente no fluxo legado), `restaurarVersao`
+  (passa os valores da versão restaurada — traz de volta), `aplicarNovaVersao`
+  e `registrarNovaVersao` (2 parâmetros novos cada, quem decide o valor
+  é sempre o chamador). `DocumentoTools.confirmarRascunhoPendente`
+  **não precisou de nenhuma mudança** — delega pra `atualizar()`/`criar()`,
+  que já tratam a regra; confirmado via `git diff` vazio nesse arquivo.
+- Testes novos: 5 — (a) fluxo legado sem estruturado mantém o campo
+  sempre nulo; (b) atualizar via REST legado invalida estruturado
+  existente, versão anterior nunca é tocada (só 1 INSERT novo); (c)
+  o mesmo via `confirmarRascunhoPendente` de um rascunho ATUALIZAR
+  legado, ponta a ponta com um `DocumentoService` REAL por baixo
+  (`DocumentoToolsConfirmarEstruturadoTest`, novo arquivo); (d)
+  `restaurarVersao` traz `conteudoEstruturado`/`versaoSchema` de volta
+  da versão restaurada; (e) o campo não interfere com nenhuma coluna de
+  metadado (independência estrutural).
+- Suíte completa (execução real): **156/156 passando, 0 skipped, 0 falhas,
+  0 erros** (era 151 — aumentou 5, consistente).
+- Desvios do plano: nenhum. Nenhuma asserção de teste existente foi
+  alterada (confirmado: diff de `DocumentoServiceTest.java` é
+  `88 insertions(+), 0 deletions(-)`).

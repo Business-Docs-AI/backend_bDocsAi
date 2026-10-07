@@ -308,6 +308,94 @@ class DocumentoServiceTest {
         verify(eventPublisher, never()).publishEvent(any());
     }
 
+    // (a) Fluxo legado sem estruturado grava documento e versão idênticos a antes.
+    @Test
+    void fluxoLegadoSemEstruturadoMantemConteudoEstruturadoSempreNuloNaCriacao() {
+        DocumentoRequestDTO dto = new DocumentoRequestDTO("Título", "<p>Conteúdo</p>", null, 1L);
+
+        ArgumentCaptor<DocumentoEntity> captorDocumento = ArgumentCaptor.forClass(DocumentoEntity.class);
+        documentoService.criar(dto);
+
+        verify(documentoRepository, atLeastOnce()).save(captorDocumento.capture());
+        assertThat(captorDocumento.getAllValues().get(0).getConteudoEstruturado()).isNull();
+
+        ArgumentCaptor<DocumentoVersaoEntity> captorVersao = ArgumentCaptor.forClass(DocumentoVersaoEntity.class);
+        verify(documentoVersaoRepository).save(captorVersao.capture());
+        assertThat(captorVersao.getValue().getConteudoEstruturado()).isNull();
+        assertThat(captorVersao.getValue().getVersaoSchema()).isNull();
+    }
+
+    // (b) Documento com estruturado, atualizado via REST legado → nova versão com
+    // conteudo_estruturado NULL; versão anterior nunca é tocada (só um INSERT novo).
+    @Test
+    void atualizarPeloFluxoLegadoInvalidaOConteudoEstruturadoExistente() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity existente = documentoExistente(id, 1, "hash-antigo-arbitrario");
+        existente.setConteudoEstruturado("{\"objetivo\":\"antigo\"}");
+        existente.setVersaoSchema("v1");
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+
+        DocumentoRequestDTO dto = new DocumentoRequestDTO("Novo Título", "<p>Novo conteúdo</p>", "ajuste", 1L);
+
+        documentoService.atualizar(id, dto);
+
+        assertThat(existente.getConteudoEstruturado()).isNull();
+        assertThat(existente.getVersaoSchema()).isNull();
+
+        ArgumentCaptor<DocumentoVersaoEntity> captor = ArgumentCaptor.forClass(DocumentoVersaoEntity.class);
+        verify(documentoVersaoRepository, times(1)).save(captor.capture());
+        assertThat(captor.getValue().getNumeroVersao()).isEqualTo(2);
+        assertThat(captor.getValue().getConteudoEstruturado()).isNull();
+    }
+
+    // (d) restaurarVersao traz conteudo_estruturado e versao_schema de volta da versão restaurada.
+    @Test
+    void restaurarVersaoTrazDeVoltaOConteudoEstruturadoEVersaoSchemaDaquelaVersao() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity existente = documentoExistente(id, 2, "hash-atual-diferente");
+
+        DocumentoVersaoEntity versaoAntiga = new DocumentoVersaoEntity();
+        versaoAntiga.setDocumentoId(id);
+        versaoAntiga.setNumeroVersao(1);
+        versaoAntiga.setTitulo("Título Versão 1");
+        versaoAntiga.setConteudoHtml("<p>Conteúdo versão 1</p>");
+        versaoAntiga.setAutor("Autor Original");
+        versaoAntiga.setCriadoEm(LocalDateTime.now());
+        versaoAntiga.setConteudoEstruturado("{\"objetivo\":\"da versão 1\"}");
+        versaoAntiga.setVersaoSchema("v1");
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+        when(documentoVersaoRepository.findByDocumentoIdAndNumeroVersao(id, 1))
+                .thenReturn(Optional.of(versaoAntiga));
+
+        documentoService.restaurarVersao(id, 1);
+
+        assertThat(existente.getConteudoEstruturado()).isEqualTo("{\"objetivo\":\"da versão 1\"}");
+        assertThat(existente.getVersaoSchema()).isEqualTo("v1");
+
+        ArgumentCaptor<DocumentoVersaoEntity> captor = ArgumentCaptor.forClass(DocumentoVersaoEntity.class);
+        verify(documentoVersaoRepository).save(captor.capture());
+        assertThat(captor.getValue().getConteudoEstruturado()).isEqualTo("{\"objetivo\":\"da versão 1\"}");
+    }
+
+    // (e) conteudo_estruturado guarda só conteúdo, nunca metadado (B3) — independência
+    // estrutural entre o campo e as colunas de metadado (nenhum setter deriva o outro).
+    @Test
+    void conteudoEstruturadoNaoInterfereComOsCamposDeMetadado() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity documento = documentoExistente(id, 1, "hash-qualquer");
+        documento.setTipoDocumento(TipoDocumento.PROCESSO);
+        documento.setStatusCicloVida(StatusCicloVida.VIGENTE);
+        documento.setMacroprocessoId(5L);
+
+        documento.setConteudoEstruturado("{\"objetivo\":\"x\",\"fluxo\":[]}");
+
+        assertThat(documento.getTipoDocumento()).isEqualTo(TipoDocumento.PROCESSO);
+        assertThat(documento.getStatusCicloVida()).isEqualTo(StatusCicloVida.VIGENTE);
+        assertThat(documento.getMacroprocessoId()).isEqualTo(5L);
+    }
+
     private DocumentoEntity documentoExistente(UUID id, int versaoAtual, String hash) {
         DocumentoEntity documento = new DocumentoEntity();
         documento.setId(id);

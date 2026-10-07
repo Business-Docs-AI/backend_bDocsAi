@@ -11,6 +11,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -72,4 +74,15 @@ public class RascunhoDocumentoEntity {
     // documentoIdAlvo é sempre nulo no caso de criação.
     @Column(name = "documento_resultante_id")
     private UUID documentoResultanteId;
+
+    // Diferente de DocumentoEntity/DocumentoVersaoEntity: aqui o JSON pode conter TUDO (é só
+    // uma proposta) — conteúdo E metadados juntos. A separação (B3) acontece só na
+    // confirmação, ao aplicar nas colunas de DocumentoEntity (Etapa 13) — nenhum código
+    // ainda escreve neste campo (fica pronto pra quando a tool estruturada existir).
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conteudo_estruturado", columnDefinition = "jsonb")
+    private String conteudoEstruturado;
+
+    @Column(name = "versao_schema", length = 20)
+    private String versaoSchema;
 }

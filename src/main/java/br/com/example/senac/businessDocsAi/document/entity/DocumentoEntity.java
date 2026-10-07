@@ -111,4 +111,15 @@ public class DocumentoEntity {
 
     @Column(name = "processo_pai_id")
     private UUID processoPaiId;
+
+    // Conteúdo estruturado (JSON), versionável junto com conteudo_html (migration V12) — ver
+    // decisão B3: guarda SÓ conteúdo (objetivo/escopo/fluxo/regras...), NUNCA metadado (os
+    // metadados são as colunas acima). NULL sempre que o documento foi criado/atualizado só
+    // pelo fluxo legado de HTML (ver DocumentoService.atualizar — decisão C3).
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conteudo_estruturado", columnDefinition = "jsonb")
+    private String conteudoEstruturado;
+
+    @Column(name = "versao_schema", length = 20)
+    private String versaoSchema;
 }
