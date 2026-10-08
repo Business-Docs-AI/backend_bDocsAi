@@ -59,7 +59,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 6 | Áreas participantes (join table informativa) | ✅ concluída |
 | 7 | Conteúdo estruturado versionável (jsonb) | ✅ concluída |
 | 8 | DTOs estruturados + validação (Bean + semântica) | ✅ concluída |
-| 9 | Renderizador HTML determinístico | ⏳ pendente |
+| 9 | Renderizador HTML determinístico | ✅ concluída |
 | 10 | Investigação: function calling com POJO aninhado | ⏳ pendente |
 | 11 | Investigação: orçamento de tokens | ⏳ pendente |
 | 12 | Prompt v2 (composto sobre o v1) | ⏳ pendente |
@@ -370,3 +370,20 @@ verificação.
   (`illegal character '﻿'`) — corrigido reescrevendo o arquivo
   sem BOM antes de rodar a suíte; nenhum commit chegou a ser feito com
   o BOM.
+
+### Etapa 9 — Renderizador HTML determinístico
+- Arquivos: `document/service/EstruturaDocumentoHtmlRenderer.java`
+  (novo, standalone — nada o chama ainda); `EstruturaDocumentoHtmlRendererTest.java`
+  (novo). Todo texto do LLM é inserido via `Entities.escape` do Jsoup
+  antes de montar a tag (nunca HTML cru), e o resultado inteiro ainda
+  passa pelo `HtmlSanitizerService` normal ao final. Cada etapa/regra/
+  exceção vira um `<h3>` com o ID no próprio texto (ex.: "E01 — Nome"),
+  sem precisar mudar `HtmlSectionSplitter` — ele já corta por h1/h2/h3,
+  então cada item atômico já nasce como chunk próprio na indexação.
+- Testes novos: 3 — ida-e-volta confirmando que `HtmlSectionSplitter`
+  gera um chunk por item atômico (etapa/regra); seções opcionais
+  ausentes não geram chunk vazio; texto do LLM com tags (`<script>`,
+  `<h2>`) nunca vira HTML executável nem seção falsa no splitter.
+- Suíte completa (execução real): **175/175 passando, 0 skipped, 0 falhas,
+  0 erros** (era 172 — aumentou 3, consistente).
+- Desvios do plano: nenhum.
