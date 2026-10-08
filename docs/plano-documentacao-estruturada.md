@@ -58,7 +58,7 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 5 | Endpoint ADMIN de mudança de `status_ciclo_vida` | ✅ concluída |
 | 6 | Áreas participantes (join table informativa) | ✅ concluída |
 | 7 | Conteúdo estruturado versionável (jsonb) | ✅ concluída |
-| 8 | DTOs estruturados + validação (Bean + semântica) | ⏳ pendente |
+| 8 | DTOs estruturados + validação (Bean + semântica) | ✅ concluída |
 | 9 | Renderizador HTML determinístico | ⏳ pendente |
 | 10 | Investigação: function calling com POJO aninhado | ⏳ pendente |
 | 11 | Investigação: orçamento de tokens | ⏳ pendente |
@@ -339,3 +339,34 @@ verificação.
 - Desvios do plano: nenhum. Nenhuma asserção de teste existente foi
   alterada (confirmado: diff de `DocumentoServiceTest.java` é
   `88 insertions(+), 0 deletions(-)`).
+
+### Etapa 8 — DTOs estruturados + validação (PROCESSO/PROCEDIMENTO)
+- Arquivos: pacote novo `document/dto/estruturado/` com `DocumentoEstruturadoDTO`
+  (conteúdo + bloco de metadados C2a) e os records aninhados
+  (`EscopoDTO`, `EtapaDTO`, `DecisaoDTO`/`DecisaoOpcaoDTO`, `RegraNegocioDTO`/`TipoRegraNegocio`,
+  `ExcecaoDTO`, `RaciEntryDTO`, `SipocDTO`, `GlossarioEntryDTO`,
+  `DocumentoRelacionadoDTO`) — todos com `@Description` do langchain4j
+  nos campos; decisões/RACI referenciam etapa só por ID (sem estrutura
+  recursiva, por causa das limitações do Gemini). `document/service/DocumentoEstruturadoValidator.java`
+  (novo) — validação semântica: tipo restrito a PROCESSO/PROCEDIMENTO
+  nesta entrega, IDs únicos (etapa/regra/exceção), referências íntegras
+  (regra/etapa/decisão/RACI), decisão com ≥2 opções, `proximaEtapaId`
+  e `decisao` nunca juntos, nenhuma etapa órfã (alcançabilidade a
+  partir da primeira etapa). Nada disto é chamado por nenhuma tool
+  ainda — arquivos novos e isolados, zero risco de runtime.
+- Testes novos: 16 (9 de Bean Validation — fixture válida sem
+  violação, campos obrigatórios rejeitados vazios/nulos, decisão com 1
+  opção rejeitada, seções opcionais vazias aceitas, seção opcional nula
+  rejeitada; 7 semânticos — fixture válida sem erro, tipo não suportado,
+  IDs de etapa duplicados, referência a regra inexistente, decisão com
+  1 opção, `proximaEtapaId`+`decisao` ambíguos, etapa órfã, RACI
+  referenciando etapa inexistente).
+- Suíte completa (execução real): **172/172 passando, 0 skipped, 0 falhas,
+  0 erros** (era 156 — aumentou 16, consistente).
+- Desvios do plano: nenhum arquivo de teste pré-existente foi tocado
+  (só arquivos novos). Correção no caminho: o primeiro `Write` da
+  fixture de teste, feito via PowerShell pra tornar métodos do builder
+  públicos, introduziu um BOM UTF-8 que quebrou a compilação
+  (`illegal character '﻿'`) — corrigido reescrevendo o arquivo
+  sem BOM antes de rodar a suíte; nenhum commit chegou a ser feito com
+  o BOM.
