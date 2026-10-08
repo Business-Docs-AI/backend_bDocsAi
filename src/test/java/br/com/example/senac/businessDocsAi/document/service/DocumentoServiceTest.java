@@ -349,6 +349,37 @@ class DocumentoServiceTest {
         assertThat(captor.getValue().getConteudoEstruturado()).isNull();
     }
 
+    // (P3) Atualizar pelo fluxo legado SEM mudança de conteúdo (mesmo hash — só categoria/
+    // metadado) é um caminho totalmente diferente: nunca passa por aplicarNovaVersao (que é
+    // quem nulifica o estruturado), então um conteúdo estruturado já existente precisa
+    // continuar intacto, e nenhuma versão nova pode ser criada.
+    @Test
+    void atualizarSemMudarOConteudoPreservaOConteudoEstruturadoExistenteENaoVersiona() {
+        UUID id = UUID.randomUUID();
+        String titulo = "Título Estável";
+        String html = "<p>Conteúdo estável</p>";
+        String hashAtual = sha256(titulo, html);
+
+        DocumentoEntity existente = documentoExistente(id, 1, hashAtual);
+        existente.setConteudoEstruturado("{\"objetivo\":\"preservado\"}");
+        existente.setVersaoSchema("v1");
+        existente.setCategoriaId(1L);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+
+        // Só a categoria muda (2L em vez de 1L) — título e HTML idênticos, mesmo hash.
+        DocumentoRequestDTO dto = new DocumentoRequestDTO(titulo, html, null, 2L);
+
+        documentoService.atualizar(id, dto);
+
+        assertThat(existente.getConteudoEstruturado()).isEqualTo("{\"objetivo\":\"preservado\"}");
+        assertThat(existente.getVersaoSchema()).isEqualTo("v1");
+        assertThat(existente.getCategoriaId()).isEqualTo(2L);
+        assertThat(existente.getVersaoAtual()).isEqualTo(1);
+        verify(documentoVersaoRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
     // (d) restaurarVersao traz conteudo_estruturado e versao_schema de volta da versão restaurada.
     @Test
     void restaurarVersaoTrazDeVoltaOConteudoEstruturadoEVersaoSchemaDaquelaVersao() {

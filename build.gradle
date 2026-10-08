@@ -72,6 +72,14 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// P4: força UTF-8 na leitura dos .java pelo compilador — sem isso, o javac usa o charset
+// padrão da plataforma (no Windows, varia por configuração regional), o que já causou
+// corrupção de caracteres acentuados em arquivo editado por uma ferramenta externa.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 tasks.named('test') {
     useJUnitPlatform()
+    systemProperty 'file.encoding', 'UTF-8'
 }

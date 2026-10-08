@@ -387,3 +387,41 @@ verificação.
 - Suíte completa (execução real): **175/175 passando, 0 skipped, 0 falhas,
   0 erros** (era 172 — aumentou 3, consistente).
 - Desvios do plano: nenhum.
+
+## Pendências P1–P4 (antes da Etapa 10, 2026-10-09)
+
+- **P1**: V1–V3 reexecutadas contra o HEAD atual (agora com V9–V12).
+  V1/V2: só `DocumentoServiceTest.java` continua sendo o único teste
+  pré-existente tocado (100% aditivo); nenhuma migration antiga
+  tocada. V3: banco de dev real (12 documentos, 9 ativos) migrado até
+  V12 — os 9 documentos ativos têm `tipo_documento='NAO_CLASSIFICADO'`,
+  `status_ciclo_vida='VIGENTE'`, `conteudo_estruturado`/`versao_schema`
+  NULL (esperado — nenhum documento tem conteúdo estruturado ainda),
+  zero nulos nos campos obrigatórios, app/listagem/chat funcionando.
+  `documento_versao`/`documento_rascunho` confirmadas com as colunas
+  novas via `\d`. V4 reconfirmada rapidamente (flag ligada → 200 em
+  `/macroprocessos`) já que nada nas Etapas 7–9 tocou esse código.
+- **P2**: `HtmlSanitizerService` (`Safelist.relaxed()`) já permite
+  table/thead/tbody/tr/th/td — confirmado por teste real, não só
+  leitura de código. Nenhuma alteração na safelist foi necessária.
+  Testes novos: `HtmlSanitizerServiceTest` (2, tabela e lista/strong
+  sobrevivem) + um teste novo em `EstruturaDocumentoHtmlRendererTest`
+  (RACI com tabela + SIPOC, renderizado e sanitizado, todo o conteúdo
+  e a tabela sobrevivem, e o splitter ainda consegue extrair as
+  seções depois).
+- **P3**: teste novo em `DocumentoServiceTest` — atualizar pelo fluxo
+  legado SEM mudança de conteúdo (mesmo hash, só categoria/metadado)
+  preserva um `conteudoEstruturado`/`versaoSchema` já existente e não
+  cria versão nova (esse branch nunca chama `aplicarNovaVersao`, que é
+  quem nulifica).
+- **P4**: `build.gradle` não forçava encoding — adicionado
+  `tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }`
+  + `systemProperty 'file.encoding', 'UTF-8'` na task de teste. Causa
+  raiz do incidente da Etapa 8 (BOM) registrada no commit. A partir de
+  agora, nenhuma edição de arquivo mais passa por PowerShell
+  (`Set-Content`/`Out-File`) — só pelas ferramentas de arquivo
+  (Read/Edit/Write), que gravam UTF-8 sem BOM.
+- Testes novos (P2+P3): 4. Suíte completa (execução real): **179/179
+  passando, 0 skipped, 0 falhas, 0 erros** (era 175 — aumentou 4,
+  consistente). Nenhuma asserção de teste existente alterada
+  (`DocumentoServiceTest.java`: `31 insertions(+), 0 deletions(-)`).

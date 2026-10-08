@@ -4,6 +4,8 @@ import br.com.example.senac.businessDocsAi.ai.ingestion.HtmlSectionSplitter;
 import br.com.example.senac.businessDocsAi.document.dto.estruturado.DocumentoEstruturadoDTO;
 import br.com.example.senac.businessDocsAi.document.dto.estruturado.DocumentoEstruturadoDTOBeanValidationTest;
 import br.com.example.senac.businessDocsAi.document.dto.estruturado.EtapaDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.RaciEntryDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.SipocDTO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -61,9 +63,7 @@ class EstruturaDocumentoHtmlRendererTest {
         );
         DocumentoEstruturadoDTO dto = DocumentoEstruturadoDTOBeanValidationTest.fixtureBuilder()
                 .fluxo(List.of(etapaComInjecao))
-                .raci(List.of(new br.com.example.senac.businessDocsAi.document.dto.estruturado.RaciEntryDTO(
-                        "E01", "Papel", "Papel2", List.of(), List.of()
-                )))
+                .raci(List.of(new RaciEntryDTO("E01", "Papel", "Papel2", List.of(), List.of())))
                 .build();
 
         String html = renderer.renderizar(dto);
@@ -78,5 +78,36 @@ class EstruturaDocumentoHtmlRendererTest {
                 .map(HtmlSectionSplitter.Secao::titulo)
                 .toList();
         assertThat(titulos).doesNotContain("Secao Falsa Injetada");
+    }
+
+    // P2: RACI é renderizado como <table> e SIPOC como <ul> — confirma que a safelist atual
+    // (Safelist.relaxed(), sem alteração) preserva tabela e todo o conteúdo depois de
+    // renderizar() já ter passado pelo HtmlSanitizerService internamente.
+    @Test
+    void raciETemSipocSobrevivemAoRenderizarESanitizar() {
+        DocumentoEstruturadoDTO dto = DocumentoEstruturadoDTOBeanValidationTest.fixtureBuilder()
+                .raci(List.of(new RaciEntryDTO(
+                        "E01", "Atendente", "Supervisor", List.of("Financeiro"), List.of("Cliente")
+                )))
+                .sipoc(new SipocDTO(
+                        List.of("Fornecedor X"), List.of("Pedido"), List.of("Nota Fiscal"), List.of("Cliente final")
+                ))
+                .build();
+
+        String html = renderer.renderizar(dto);
+
+        // A tabela do RACI, com cabeçalho e os valores das colunas, sobrevive à sanitização.
+        assertThat(html)
+                .contains("<table>", "<thead>", "<tbody>", "<th>", "<td>")
+                .contains("Atendente", "Supervisor", "Financeiro", "Cliente");
+
+        // SIPOC (listas) e todo o conteúdo também sobrevivem.
+        assertThat(html).contains("SIPOC", "Fornecedor X", "Pedido", "Nota Fiscal", "Cliente final");
+
+        // E o splitter ainda consegue extrair as seções normalmente depois da sanitização.
+        List<String> titulos = splitter.dividir(dto.titulo(), html).stream()
+                .map(HtmlSectionSplitter.Secao::titulo)
+                .toList();
+        assertThat(titulos).contains("Matriz RACI", "SIPOC");
     }
 }
