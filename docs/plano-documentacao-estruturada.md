@@ -96,7 +96,7 @@ usuário.
 | 12 | Prompt v2 (composto sobre o v1) | ⏳ pendente — já tem o texto validado na Etapa 11b (V1: uma única chamada + anti-redundância + concisão) |
 | 13.1 | Migrações aditivas p/ geração assíncrona (`StatusRascunho` +2 valores, `conteudo_html` nullable, 4 colunas novas) | ✅ concluída — **substitui a antiga "Etapa 13" única** (ver "Proposta — geração assíncrona" abaixo) |
 | 13.2 | `ChatModel` dedicado ao worker de geração (maxTokens/timeout próprios, não toca o `chatModel` do chat interativo) | ✅ concluída |
-| 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo | ⏳ pendente |
+| 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo + R1 nas tools legadas + confirmação estruturada (B3) | ✅ concluída |
 | 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ⏳ pendente |
 | 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ⏳ pendente |
 | 13.6 | Frontend: polling (reaproveitando `getPendingDraft` existente) + estado "gerando"/erro no painel | ⏳ pendente |
@@ -1106,3 +1106,81 @@ Etapa 11), o comentário está desatualizado/incorreto.
 - Suíte completa (execução real): **193/193 passando, 0 skipped, 0
   falhas, 0 erros** (era 191 — aumentou 2, consistente). Nenhum teste
   existente alterado.
+
+### Etapa 13.3 — Tool leve + R1 nas tools legadas + confirmação estruturada (2026-10-09)
+
+Esta etapa acabou incorporando, além da tool leve planejada, a lógica de
+confirmação que separa conteúdo de metadado (decisão B3) — ela só pode
+viver em `DocumentoTools.confirmarRascunhoPendente` (não existe endpoint
+REST de confirmação, só o caminho do chat), então faz mais sentido no
+mesmo commit que toca esse método por causa do R1.
+
+- **`StatusRascunho.ativos()`**: método estático novo, substitui a
+  constante local que eu ia duplicar em `DocumentoTools` e
+  `DocumentoEstruturadoTools` — fonte única da regra "quais estados
+  contam como proposta ativa de uma conversa" (R1).
+- **`DocumentoEstruturadoTools`** (novo, `@ConditionalOnProperty` como
+  `MacroprocessoTools`): `solicitarGeracaoDocumentoEstruturado`/
+  `solicitarAtualizacaoDocumentoEstruturado` — SÓ recebem título/
+  categoria/ID-alvo/instruções opcionais, NUNCA o documento completo.
+  Criam o rascunho em `GERANDO` e publicam `GeracaoEstruturadaSolicitadaEvent(rascunhoId)`.
+  Material-fonte NÃO viaja como argumento da tool (evita o modelo
+  resumir/perder fidelidade) — o worker (Etapa 13.4) vai ler do
+  histórico persistido (R4).
+- **R1 aplicado nas 4 tools legadas de `DocumentoTools`**:
+  `prepararCriacaoDocumento`/`prepararAtualizacaoDocumento` agora
+  recusam com mensagem clara se já há um rascunho em `GERANDO` na
+  conversa (e colapsam em cima de um `PENDENTE`/`ERRO_GERACAO`
+  existente, igual sempre fez); `confirmarRascunhoPendente` recusa
+  `GERANDO` ("ainda está sendo gerado") e `ERRO_GERACAO` (mostra a
+  mensagem de erro); `descartarRascunhoPendente` passou a aceitar
+  descartar um rascunho em `GERANDO` também. **Nenhuma regra nova
+  inventada** — é a mesma regra de "só uma proposta ativa por
+  conversa" que já existia pra `PENDENTE`, agora olhando os 3 estados
+  ativos.
+- **`DocumentoEstruturadoAplicadorService`** (novo): na confirmação, se
+  `rascunho.conteudoEstruturado != null`, desserializa o JSON completo
+  (conteúdo+metadado juntos — assim o rascunho sempre guardou, ver
+  comentário de Etapa 7), separa em (a) JSON só de conteúdo e (b)
+  `DocumentoEstruturadoMetadadosDTO`, e chama os métodos novos de
+  `DocumentoService`. `processoPaiId` inválido (não-UUID) vindo do
+  modelo é ignorado, não quebra a confirmação.
+- **`DocumentoService.criarComEstrutura`/`atualizarComEstrutura`**
+  (novos — `criar`/`atualizar` existentes INTOCADOS): aplicam o bloco
+  de metadados nas colunas do documento (`tipoDocumento`,
+  `macroprocessoId`, `processoPaiId` com `validarHierarquiaProcesso`,
+  `donoProcesso`, `aprovador`, `periodicidadeRevisaoMeses`,
+  `confidencialidade`, `tags`) e substituem as áreas participantes
+  (`DocumentoAreaParticipanteEntity`). `atualizarComEstrutura` sempre
+  versiona (nunca pula por hash igual — confirmar uma proposta
+  estruturada é sempre deliberado, diferente de uma edição de rotina).
+- **`RagAssistantConfig`**: `DocumentoEstruturadoTools` só é adicionada
+  à lista de tools do assistente quando
+  `FeatureFlags.documentacaoEstruturadaHabilitadaPara(provedorAtual)` —
+  gate adicional além do bean existir, pra nem oferecer a tool leve a
+  um provedor onde o tool-calling já quebra (Gemini).
+- **Testes existentes tocados (mecânico, zero asserção alterada)**:
+  `DocumentoServiceTest.java` (+1 mock, +1 import, 1 linha de
+  construtor estendida — `6 insertions(+), 1 deletion(-)` só pela linha
+  do construtor crescer), `DocumentoToolsTest.java` e
+  `DocumentoToolsConfirmarEstruturadoTest.java` (novo mock/import +
+  nome do método de repositório stubado atualizado pra bater com o que
+  o código agora chama — nenhuma asserção removida/alterada, só
+  acrescentadas).
+- **Testes novos (21)**: `DocumentoEstruturadoToolsTest` (7 — cria
+  `GERANDO`, publica evento, recusa sem acesso, recusa com outro
+  `GERANDO` ativo, reaproveita `ERRO_GERACAO` preservando
+  `turnoCriacao`, atualização com ID inválido/sem acesso/sucesso);
+  `DocumentoEstruturadoToolsDesligadoPorDefaultTest` +
+  `...LigadoComAFlagTest` (2 — existência do bean por flag);
+  `DocumentoEstruturadoAplicadorServiceTest` (3 — separação
+  conteúdo/metadado pra CRIAR e ATUALIZAR, `processoPaiId` inválido
+  ignorado); `DocumentoServiceComEstruturaTest` (4 — metadados
+  aplicados, `NAO_CLASSIFICADO` sem metadados, sempre versiona,
+  autorreferência de hierarquia rejeitada); 5 novos métodos em
+  `DocumentoToolsTest` (R1: recusa com `GERANDO` ativo, confirmar
+  recusa `GERANDO`/`ERRO_GERACAO`, descartar funciona em `GERANDO`,
+  confirmar com estruturado delega pro aplicador).
+- Suíte completa (execução real): **214/214 passando, 0 skipped, 0
+  falhas, 0 erros** (era 193 — aumentou 21, consistente com os 21
+  testes novos). Nenhum teste existente teve asserção alterada.

@@ -3,9 +3,11 @@ package br.com.example.senac.businessDocsAi.document.service;
 import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
 import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
+import br.com.example.senac.businessDocsAi.document.dto.DocumentoEstruturadoMetadadosDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoRequestDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoVersaoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoAreaParticipanteEntity;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoVersaoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
@@ -13,6 +15,7 @@ import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoAreaParticipanteRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
 import br.com.example.senac.businessDocsAi.exception.BadRequestException;
@@ -50,6 +53,7 @@ public class DocumentoService {
     private final CurrentUserProvider currentUserProvider;
     private final CategoriaAccessService categoriaAccessService;
     private final ApplicationEventPublisher eventPublisher;
+    private final IDocumentoAreaParticipanteRepository documentoAreaParticipanteRepository;
 
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     @Transactional
@@ -115,6 +119,122 @@ public class DocumentoService {
         aplicarNovaVersao(documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao(), null, null);
 
         return toResponseDTO(documento);
+    }
+
+    // Etapa 13.3 (decisão B3, confirmação da proposta estruturada gerada pelo worker
+    // assíncrono): equivalente a criar(), mas grava conteudoEstruturado/versaoSchema na
+    // versão 1 e aplica o bloco de metadados nas colunas do documento — nunca dentro do
+    // JSON de conteúdo salvo. O conteúdo HTML já vem renderizado/sanitizado pelo worker
+    // (EstruturaDocumentoHtmlRenderer já sanitiza internamente) — sanitiza de novo aqui
+    // mesmo assim, pela mesma razão de sempre (nunca confiar em HTML vindo de fora deste
+    // método, mesmo que a origem pareça seguir as mesmas regras).
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @Transactional
+    public DocumentoResponseDTO criarComEstrutura(
+            DocumentoRequestDTO dto, String conteudoEstruturadoJson, String versaoSchema,
+            DocumentoEstruturadoMetadadosDTO metadados
+    ) {
+        categoriaAccessService.validarAcessoCategoria(dto.categoriaId());
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
+        String hash = calcularHash(dto.titulo(), htmlSanitizado);
+
+        DocumentoEntity documento = new DocumentoEntity();
+        documento.setTitulo(dto.titulo());
+        documento.setConteudoHtml(htmlSanitizado);
+        documento.setCategoriaId(dto.categoriaId());
+        documento.setHashConteudo(hash);
+        documento.setVersaoAtual(1);
+        documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
+        documento.setCriadoPor(autor);
+        documento.setCriadoEm(LocalDateTime.now());
+        documento.setDeletado(false);
+        documento.setStatusCicloVida(StatusCicloVida.VIGENTE);
+        aplicarMetadadosEstruturados(documento, null, metadados);
+
+        DocumentoEntity salvo = documentoRepository.save(documento);
+
+        registrarNovaVersao(
+                salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1, conteudoEstruturadoJson, versaoSchema
+        );
+        aplicarAreasParticipantes(salvo.getId(), metadados);
+
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(salvo.getId(), salvo.getVersaoAtual()));
+
+        return toResponseDTO(salvo);
+    }
+
+    // Ver criarComEstrutura — mesma ideia para atualização. Diferente de atualizar() (fluxo
+    // legado), aqui SEMPRE versiona (nunca pula por hash igual): confirmar uma proposta
+    // estruturada é uma ação deliberada e explícita do usuário, não uma edição de rotina.
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @Transactional
+    public DocumentoResponseDTO atualizarComEstrutura(
+            UUID id, DocumentoRequestDTO dto, String conteudoEstruturadoJson, String versaoSchema,
+            DocumentoEstruturadoMetadadosDTO metadados
+    ) {
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+        categoriaAccessService.validarAcessoCategoria(dto.categoriaId());
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
+        String novoHash = calcularHash(dto.titulo(), htmlSanitizado);
+
+        documento.setCategoriaId(dto.categoriaId());
+        aplicarMetadadosEstruturados(documento, id, metadados);
+
+        aplicarNovaVersao(
+                documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao(),
+                conteudoEstruturadoJson, versaoSchema
+        );
+        aplicarAreasParticipantes(id, metadados);
+
+        return toResponseDTO(documento);
+    }
+
+    private void aplicarMetadadosEstruturados(
+            DocumentoEntity documento, UUID documentoIdParaChecarCiclo, DocumentoEstruturadoMetadadosDTO metadados
+    ) {
+        if (metadados == null) {
+            documento.setTipoDocumento(TipoDocumento.NAO_CLASSIFICADO);
+            return;
+        }
+
+        documento.setTipoDocumento(
+                metadados.tipoDocumento() != null ? metadados.tipoDocumento() : TipoDocumento.NAO_CLASSIFICADO
+        );
+        documento.setMacroprocessoId(metadados.macroprocessoId());
+
+        if (metadados.processoPaiId() != null) {
+            // documentoIdParaChecarCiclo é null na criação (o ID ainda não existe — não há
+            // como um documento inexistente já ser ancestral de ninguém, então o
+            // autorreferência/ciclo é trivialmente impossível nesse caso).
+            validarHierarquiaProcesso(documentoIdParaChecarCiclo, metadados.processoPaiId());
+        }
+        documento.setProcessoPaiId(metadados.processoPaiId());
+
+        documento.setDonoProcesso(metadados.donoProcesso());
+        documento.setAprovador(metadados.aprovador());
+        documento.setPeriodicidadeRevisaoMeses(metadados.periodicidadeRevisaoMeses());
+        documento.setConfidencialidade(metadados.confidencialidade());
+        documento.setTags(metadados.tags());
+    }
+
+    // Substitui por completo o conjunto de áreas participantes pelo que a proposta trouxe —
+    // nunca usado para controle de acesso (ver DocumentoAreaParticipanteEntity).
+    private void aplicarAreasParticipantes(UUID documentoId, DocumentoEstruturadoMetadadosDTO metadados) {
+        documentoAreaParticipanteRepository.deleteByDocumentoId(documentoId);
+
+        if (metadados == null || metadados.areasParticipantes() == null) {
+            return;
+        }
+
+        for (Long categoriaId : metadados.areasParticipantes()) {
+            documentoAreaParticipanteRepository.save(new DocumentoAreaParticipanteEntity(documentoId, categoriaId));
+        }
     }
 
     @PreAuthorize("isAuthenticated()")

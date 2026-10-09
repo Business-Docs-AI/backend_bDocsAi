@@ -10,9 +10,11 @@ import br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEnti
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.StatusRascunho;
 import br.com.example.senac.businessDocsAi.document.entity.TipoRascunho;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoAreaParticipanteRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.service.DocumentoEstruturadoAplicadorService;
 import br.com.example.senac.businessDocsAi.document.service.DocumentoService;
 import br.com.example.senac.businessDocsAi.document.service.HtmlSanitizerService;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
@@ -73,6 +75,12 @@ class DocumentoToolsConfirmarEstruturadoTest {
     @Mock
     private CategoryService categoryService;
 
+    @Mock
+    private IDocumentoAreaParticipanteRepository documentoAreaParticipanteRepository;
+
+    @Mock
+    private DocumentoEstruturadoAplicadorService documentoEstruturadoAplicadorService;
+
     private DocumentoTools documentoTools;
 
     private final UUID conversaId = UUID.randomUUID();
@@ -83,11 +91,12 @@ class DocumentoToolsConfirmarEstruturadoTest {
     void setUp() {
         DocumentoService documentoServiceReal = new DocumentoService(
                 documentoRepository, documentoVersaoRepository, categoryRepository, htmlSanitizerService,
-                currentUserProvider, categoriaAccessService, eventPublisher
+                currentUserProvider, categoriaAccessService, eventPublisher, documentoAreaParticipanteRepository
         );
 
         documentoTools = new DocumentoTools(
-                documentoServiceReal, pesquisaService, rascunhoRepository, categoryService, categoriaAccessService
+                documentoServiceReal, pesquisaService, rascunhoRepository, categoryService, categoriaAccessService,
+                documentoEstruturadoAplicadorService
         );
 
         ConversaContextHolder.iniciar(conversaId, turnoAtual);
@@ -136,7 +145,7 @@ class DocumentoToolsConfirmarEstruturadoTest {
         rascunho.setCriadoEm(LocalDateTime.now());
         // rascunho.conteudoEstruturado fica null de propósito — é um rascunho LEGADO.
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         documentoTools.confirmarRascunhoPendente();

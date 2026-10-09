@@ -125,4 +125,8 @@ public record DocumentoEstruturadoDTO(
         @Description("Palavras-chave livres pra facilitar a busca — lista vazia se não houver nenhuma")
         List<String> tags
 ) {
+    // Versão do schema gravada em documento/documento_versao/documento_rascunho.versao_schema
+    // (Etapa 13) — permite evoluir o formato do conteúdo estruturado no futuro sem quebrar
+    // documentos já salvos com uma versão anterior.
+    public static final String VERSAO_SCHEMA_ATUAL = "1.0";
 }

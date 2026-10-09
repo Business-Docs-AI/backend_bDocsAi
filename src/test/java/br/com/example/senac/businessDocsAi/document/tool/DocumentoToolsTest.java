@@ -10,6 +10,7 @@ import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.StatusRascunho;
 import br.com.example.senac.businessDocsAi.document.entity.TipoRascunho;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.service.DocumentoEstruturadoAplicadorService;
 import br.com.example.senac.businessDocsAi.document.service.DocumentoService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +45,9 @@ class DocumentoToolsTest {
     @Mock
     private CategoriaAccessService categoriaAccessService;
 
+    @Mock
+    private DocumentoEstruturadoAplicadorService documentoEstruturadoAplicadorService;
+
     private DocumentoTools documentoTools;
 
     private final UUID conversaId = UUID.randomUUID();
@@ -53,7 +57,8 @@ class DocumentoToolsTest {
     @BeforeEach
     void setUp() {
         documentoTools = new DocumentoTools(
-                documentoService, pesquisaService, rascunhoRepository, categoryService, categoriaAccessService
+                documentoService, pesquisaService, rascunhoRepository, categoryService, categoriaAccessService,
+                documentoEstruturadoAplicadorService
         );
         ConversaContextHolder.iniciar(conversaId, turnoAtual);
     }
@@ -95,7 +100,7 @@ class DocumentoToolsTest {
 
     @Test
     void confirmarRascunhoPendenteSemNenhumRascunhoDevolveMensagemSemChamarDocumentoService() {
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.empty());
 
         String resposta = documentoTools.confirmarRascunhoPendente();
@@ -108,7 +113,7 @@ class DocumentoToolsTest {
     void confirmarRascunhoPendenteNoMesmoTurnoDaPropostaEhRecusado() {
         RascunhoDocumentoEntity rascunho = rascunhoCriar(turnoAtual);
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         String resposta = documentoTools.confirmarRascunhoPendente();
@@ -124,7 +129,7 @@ class DocumentoToolsTest {
         UUID turnoAnterior = UUID.randomUUID();
         RascunhoDocumentoEntity rascunho = rascunhoCriar(turnoAnterior);
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         DocumentoResponseDTO documentoCriado = new DocumentoResponseDTO(
@@ -158,7 +163,7 @@ class DocumentoToolsTest {
         rascunho.setTurnoCriacao(turnoAnterior);
         rascunho.setCriadoEm(LocalDateTime.now());
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         DocumentoResponseDTO documentoAtualizado = new DocumentoResponseDTO(
@@ -177,7 +182,7 @@ class DocumentoToolsTest {
     void descartarRascunhoPendenteMarcaDescartadoSemChamarDocumentoService() {
         RascunhoDocumentoEntity rascunho = rascunhoCriar(UUID.randomUUID());
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         String resposta = documentoTools.descartarRascunhoPendente();
@@ -197,5 +202,86 @@ class DocumentoToolsTest {
         rascunho.setTurnoCriacao(turno);
         rascunho.setCriadoEm(LocalDateTime.now());
         return rascunho;
+    }
+
+    // --- Etapa 13.3 (R1): tools legadas agora respeitam GERANDO/ERRO_GERACAO ---
+
+    @Test
+    void prepararCriacaoDocumentoComOutroRascunhoGerandoNaConversaRecusa() {
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.prepararCriacaoDocumento("Outro", "<p>x</p>", CATEGORIA_ID);
+
+        assertThat(resposta).containsIgnoringCase("já existe um documento sendo gerado");
+        verify(rascunhoRepository, never()).save(any());
+    }
+
+    @Test
+    void confirmarRascunhoEmGerandoERecusadoComMensagemClara() {
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.confirmarRascunhoPendente();
+
+        assertThat(resposta).containsIgnoringCase("ainda está sendo gerado");
+        verifyNoInteractions(documentoService);
+    }
+
+    @Test
+    void confirmarRascunhoEmErroGeracaoERecusadoComAMensagemDeErro() {
+        RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
+        emErro.setStatus(StatusRascunho.ERRO_GERACAO);
+        emErro.setErroGeracao("Esgotou as tentativas de validação");
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(emErro));
+
+        String resposta = documentoTools.confirmarRascunhoPendente();
+
+        assertThat(resposta).contains("Esgotou as tentativas de validação");
+        verifyNoInteractions(documentoService);
+    }
+
+    @Test
+    void descartarRascunhoEmGerandoFunciona() {
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.descartarRascunhoPendente();
+
+        assertThat(gerando.getStatus()).isEqualTo(StatusRascunho.DESCARTADO);
+        assertThat(resposta).containsIgnoringCase("descartada");
+    }
+
+    // Decisão B3 pelo caminho do chat: um rascunho com conteudoEstruturado preenchido
+    // confirma pelo DocumentoEstruturadoAplicadorService, nunca por documentoService.criar
+    // direto (esse é o aplicador real, testado em DocumentoEstruturadoAplicadorServiceTest).
+    @Test
+    void confirmarRascunhoComConteudoEstruturadoDelegaParaOAplicador() {
+        UUID turnoAnterior = UUID.randomUUID();
+        RascunhoDocumentoEntity rascunho = rascunhoCriar(turnoAnterior);
+        rascunho.setConteudoEstruturado("{\"objetivo\":\"x\"}");
+        rascunho.setVersaoSchema("1.0");
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(rascunho));
+
+        DocumentoResponseDTO documentoCriado = new DocumentoResponseDTO(
+                UUID.randomUUID(), rascunho.getTitulo(), "<h2>x</h2>", 1, StatusIndexacao.PENDENTE, "Autor",
+                LocalDateTime.now(), null, null, null, null
+        );
+        when(documentoEstruturadoAplicadorService.aplicar(rascunho)).thenReturn(documentoCriado);
+
+        String resposta = documentoTools.confirmarRascunhoPendente();
+
+        verify(documentoEstruturadoAplicadorService).aplicar(rascunho);
+        verifyNoInteractions(documentoService);
+        assertThat(resposta).contains(documentoCriado.id().toString());
     }
 }

@@ -11,6 +11,7 @@ import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoAreaParticipanteRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
 import br.com.example.senac.businessDocsAi.exception.BadRequestException;
@@ -61,13 +62,16 @@ class DocumentoServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private IDocumentoAreaParticipanteRepository documentoAreaParticipanteRepository;
+
     private DocumentoService documentoService;
 
     @BeforeEach
     void setUp() {
         documentoService = new DocumentoService(
                 documentoRepository, documentoVersaoRepository, categoryRepository, htmlSanitizerService,
-                currentUserProvider, categoriaAccessService, eventPublisher
+                currentUserProvider, categoriaAccessService, eventPublisher, documentoAreaParticipanteRepository
         );
 
         lenient().when(htmlSanitizerService.sanitize(anyString())).thenAnswer(inv -> inv.getArgument(0));

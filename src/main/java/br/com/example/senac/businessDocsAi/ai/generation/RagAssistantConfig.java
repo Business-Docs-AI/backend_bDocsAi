@@ -3,7 +3,9 @@ package br.com.example.senac.businessDocsAi.ai.generation;
 import br.com.example.senac.businessDocsAi.ai.prompt.RagSystemPrompt;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
 import br.com.example.senac.businessDocsAi.categories.tool.CategoriaTools;
+import br.com.example.senac.businessDocsAi.config.FeatureFlags;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.tool.DocumentoEstruturadoTools;
 import br.com.example.senac.businessDocsAi.document.tool.DocumentoTools;
 import br.com.example.senac.businessDocsAi.document.tool.MacroprocessoTools;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
@@ -21,6 +23,7 @@ import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -160,11 +163,16 @@ public class RagAssistantConfig {
     // confirmação num turno posterior (ver DocumentoTools/ConversaContextHolder). Sem
     // ferramenta nenhuma de excluir/restaurar/reindexar.
     //
-    // MacroprocessoTools (e, a partir da Etapa 13, a tool de documento estruturado) só
-    // existem como bean com a feature flag ligada — por isso a injeção é Optional aqui: sem
-    // isso, o Spring falharia ao montar este bean com a flag desligada (NoSuchBeanDefinition).
-    // Flag é lida só no startup — mudar em runtime não tem efeito até reiniciar (os beans de
-    // AiServices são montados uma vez).
+    // MacroprocessoTools só existe como bean com a feature flag ligada — por isso a injeção
+    // é Optional aqui: sem isso, o Spring falharia ao montar este bean com a flag desligada
+    // (NoSuchBeanDefinition). Flag é lida só no startup — mudar em runtime não tem efeito
+    // até reiniciar (os beans de AiServices são montados uma vez).
+    //
+    // DocumentoEstruturadoTools (Etapa 13.3) tem um gate ADICIONAL: além do bean exigir a
+    // flag ligada, só é ADICIONADA à lista de tools quando o provedor de chat ATIVO também
+    // está habilitado pro caminho estruturado (FeatureFlags.documentacaoEstruturadaHabilitadaPara
+    // — decisão A3). Isso evita oferecer até a tool LEVE a um provedor onde o próprio
+    // tool-calling já quebra (Gemini — ver plano, "Problema separado: Gemini", Etapa 10).
     @Bean
     public RagAssistant ragAssistantComFerramentas(
             ChatModel chatModel,
@@ -172,10 +180,16 @@ public class RagAssistantConfig {
             ChatMemoryProvider chatMemoryProvider,
             DocumentoTools documentoTools,
             CategoriaTools categoriaTools,
-            Optional<MacroprocessoTools> macroprocessoToolsOpt
+            Optional<MacroprocessoTools> macroprocessoToolsOpt,
+            Optional<DocumentoEstruturadoTools> documentoEstruturadoToolsOpt,
+            FeatureFlags featureFlags,
+            @Value("${app.ai.chat-provider}") String provedorAtual
     ) {
         List<Object> tools = new ArrayList<>(List.of(documentoTools, categoriaTools));
         macroprocessoToolsOpt.ifPresent(tools::add);
+        if (featureFlags.documentacaoEstruturadaHabilitadaPara(provedorAtual)) {
+            documentoEstruturadoToolsOpt.ifPresent(tools::add);
+        }
 
         return AiServices.builder(RagAssistant.class)
                 .chatModel(chatModel)
