@@ -52,7 +52,10 @@ public class RascunhoDocumentoEntity {
     @Column(nullable = false, length = 500)
     private String titulo;
 
-    @Column(name = "conteudo_html", nullable = false, columnDefinition = "TEXT")
+    // Nullable a partir da Etapa 13.1: só fica null enquanto status=GERANDO (geração
+    // assíncrona). O fluxo legado continua sempre preenchendo (validado na camada de
+    // aplicação, não aqui) — ver CHECK constraint da migration V13 (R6).
+    @Column(name = "conteudo_html", columnDefinition = "TEXT")
     private String conteudoHtml;
 
     @Enumerated(EnumType.STRING)
@@ -85,4 +88,21 @@ public class RascunhoDocumentoEntity {
 
     @Column(name = "versao_schema", length = 20)
     private String versaoSchema;
+
+    // --- Geração assíncrona (Etapa 13.1) — só usados pelo caminho novo da tool estruturada.
+
+    @Column(name = "erro_geracao", columnDefinition = "TEXT")
+    private String erroGeracao;
+
+    @Column(name = "tentativas_geracao", nullable = false)
+    private int tentativasGeracao;
+
+    @Column(name = "instrucoes_adicionais", columnDefinition = "TEXT")
+    private String instrucoesAdicionais;
+
+    // Marca quando um worker reservou este rascunho para processar — usada pelo UPDATE
+    // condicional que evita processamento duplicado (R3) e pelo job de segurança para achar
+    // rascunhos presos em GERANDO.
+    @Column(name = "reservado_em")
+    private LocalDateTime reservadoEm;
 }

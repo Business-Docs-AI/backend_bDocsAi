@@ -28,8 +28,39 @@ Propriedade adicional: `bdocs.documentacao-estruturada.provedores` (lista,
 ex. `gemini,anthropic`) — define em quais provedores de chat a tool
 estruturada fica disponível (decisão A3).
 
+**Decisão de escopo (2026-10-09, pós-Etapa 10)**: por ora, a tool estruturada
+só é habilitada para `anthropic` — `bdocs.documentacao-estruturada.provedores=anthropic`.
+Gemini (`gemini-3.8-flash` via `langchain4j-google-ai-gemini:1.18.0`) falha de
+forma determinística em qualquer function calling via `AiServices` (ver Log,
+Etapa 10) — ficou fora do escopo desta entrega, sem alterar dependência nem
+tentar corrigir. O provedor **padrão do código continua `gemini`**
+(`ChatModelConfig`/`application.yaml` inalterados) — a troca para `anthropic`
+em produção é só **configuração de ambiente** (`AI_CHAT_PROVIDER=anthropic`),
+não uma mudança de código. Isso é um passo operacional de deploy a lembrar,
+não uma etapa do plano. A Etapa 11 (orçamento de tokens) também será medida
+só com Anthropic.
+
 **Nota de operação (B4)**: antes de ligar `bdocs.rag.filtros-ciclo-vida.enabled`
 em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
+
+## Problema separado: Gemini + tool-calling via AiServices (fora do escopo desta entrega)
+
+Registrado na Etapa 10, **não é um problema desta feature** — é uma
+incompatibilidade pré-existente entre `gemini-3.8-flash` (modelo
+"thinking") e `AiServices` do `langchain4j-google-ai-gemini:1.18.0`:
+qualquer chamada de ferramenta (nested DTO ou tool simples de parâmetros
+escalares, como a já existente `prepararCriacaoDocumento`) falha com
+`400 Function call is missing a thought_signature`. Isso significa que o
+chat de produção **já quebraria hoje** para qualquer tool-calling se
+`AI_CHAT_PROVIDER=gemini` fosse usado — não depende desta entrega.
+Nenhuma correção tentada (fora do escopo). Sugestões futuras para avaliar
+fora deste plano: (a) trocar o provedor **padrão** do código de `gemini`
+para `anthropic` em `ChatModelConfig`/`application.yaml` (hoje o padrão é
+gemini só por ser gratuito, mas é o que quebra); (b) atualizar
+`langchain4j-google-ai-gemini` para uma versão que propague
+`thought_signature` corretamente, se/quando existir. Nenhuma das duas
+ações faz parte deste plano — só registrado para decisão futura do
+usuário.
 
 ## Decisões de modelagem originais (1–12, aprovadas antes do plano)
 
@@ -60,10 +91,15 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
 | 7 | Conteúdo estruturado versionável (jsonb) | ✅ concluída |
 | 8 | DTOs estruturados + validação (Bean + semântica) | ✅ concluída |
 | 9 | Renderizador HTML determinístico | ✅ concluída |
-| 10 | Investigação: function calling com POJO aninhado | ⏳ pendente |
-| 11 | Investigação: orçamento de tokens | ⏳ pendente |
-| 12 | Prompt v2 (composto sobre o v1) | ⏳ pendente |
-| 13 | Tool estruturada (propor/confirmar/editar) | ⏳ pendente |
+| 10 | Investigação: function calling com POJO aninhado | ✅ concluída — Gemini excluído do escopo (quebra genérica, não é do DTO); Anthropic 2/5 sucesso completo, 3/5 esgotaram orçamento de tokens (ver Log) |
+| 11 | Investigação: orçamento de tokens | ✅ concluída (11 + 11b) — meta de <6.000 tokens/<60s **NÃO atingida**; melhor resultado ~13.9k tokens/~129s com prompt mais rigoroso (sem mudar schema). Correção de `maxTokens`/timeout fica para a Etapa 13, aguardando decisão sobre geração assíncrona (ver Log) |
+| 12 | Prompt v2 (composto sobre o v1) | ⏳ pendente — já tem o texto validado na Etapa 11b (V1: uma única chamada + anti-redundância + concisão) |
+| 13.1 | Migrações aditivas p/ geração assíncrona (`StatusRascunho` +2 valores, `conteudo_html` nullable, 4 colunas novas) | ✅ concluída — **substitui a antiga "Etapa 13" única** (ver "Proposta — geração assíncrona" abaixo) |
+| 13.2 | `ChatModel` dedicado ao worker de geração (maxTokens/timeout próprios, não toca o `chatModel` do chat interativo) | ⏳ pendente |
+| 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo | ⏳ pendente |
+| 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ⏳ pendente |
+| 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ⏳ pendente |
+| 13.6 | Frontend: polling (reaproveitando `getPendingDraft` existente) + estado "gerando"/erro no painel | ⏳ pendente |
 | 14 | Metadados novos no chunk do RAG | ⏳ pendente |
 | 15 | Reindexação em massa (ADMIN, manual, assíncrona) | ⏳ pendente |
 | 16 | Filtro pré-busca no RAG | ⏳ pendente |
@@ -137,6 +173,250 @@ em qualquer ambiente, rodar a reindexação em massa (Etapa 15) primeiro.
   também em `PesquisaService` (endpoint `/documentos/busca`), não só no
   RAG do chat.
 - **C5**: segunda flag dedicada ao RAG (ver tabela de flags acima).
+
+## Decisões para o prompt v2 (Etapa 12, registradas em 2026-10-09 — ainda não implementadas)
+
+- **Decisão vs. exceção**: decisão = desvio PREVISTO no fluxo normal, com
+  caminho definido (devolver, recusar, aprovar) — modelar como `EtapaDTO`
+  com `decisao`. Exceção = situação FORA do fluxo normal — modelar como
+  `ExcecaoDTO`. (A Etapa 10 mostrou as duas interpretações sendo usadas
+  pelo modelo para o mesmo caso de recusa por CNPJ/rasura; esta decisão
+  resolve a ambiguidade a favor de "decisão" quando há um caminho de
+  retorno claro no fluxo.)
+- **Confidencialidade não informada** → assumir `INTERNO` **e** registrar
+  em `pendencias` (não deixar `null` silenciosamente) — a execução 3 da
+  Etapa 10 já fez isso espontaneamente e funcionou bem.
+- **Responsáveis**: derivar o PAPEL do contexto quando possível (ex.:
+  "qualquer analista do financeiro" → "Analista Financeiro"); nome de
+  pessoa nunca é aceito como responsável, nem em RACI nem em etapas.
+- **Instrução de concisão**: descrições curtas e objetivas em cada campo
+  de texto livre — confirmado pela Etapa 11 que isso reduz tokens de
+  saída (~4%), latência (~15%) e chamadas redundantes da ferramenta
+  (20% vs. 50%), sem contrapartida observada.
+- **V1 da Etapa 11b aprovada como o prompt base**: instrução de "uma
+  única chamada" (chamar a ferramenta duas vezes é erro) + retorno da
+  tool reforçando "não chame de novo" + anti-redundância nas listas
+  macro (sipoc/riscosControles/indicadores/sistemasFerramentas não
+  repetem o que já está em alguma etapa) — eliminou 100% das chamadas
+  duplas nos testes (0/10). `RaciEntryDTO.responsavel` **NÃO** será
+  removido do schema (testado na Etapa 11b, Variação 2 — não trouxe
+  ganho mensurável, só complexidade).
+
+## Investigação: modelo dedicado para o worker de geração (Haiku, 2026-10-09)
+
+5 execuções com `claude-haiku-4-5-20251001` (mesmo prompt V1, mesmo
+schema de produção, mesmo material/gabarito), comparado com Sonnet V1
+(Etapa 11b: 5/5 sucesso, 5/5 validador limpo, ~13.897 tokens méd.,
+~129s méd.):
+
+| | Chamou a tool | Validador limpo | Tokens saída (quando chamou) | Latência (quando chamou) |
+|---|---|---|---|---|
+| Haiku (5 execuções) | **2/5 (40%)** | 0/2 (ambas com 1 e 3 erros de referência etapa↔excecao) | ~5.210 (dentro da meta de <6.000!) | ~48,5s (dentro da meta de <60s!) |
+| Sonnet V1 (referência, Etapa 11b) | 5/5 | 5/5 | ~13.897 | ~129,0s |
+
+Quando o Haiku chama a ferramenta, o resultado é rápido e pequeno — bateria
+a meta de tokens/latência que a Etapa 11b não conseguiu com o Sonnet.
+**Mas em 3/5 execuções (60%) o Haiku NÃO chamou a ferramenta** — em vez
+disso, respondeu com texto fazendo perguntas de esclarecimento ao
+usuário (ex.: "Deixa eu fazer algumas perguntas rápidas..."), ignorando
+a instrução explícita do prompt de usar `[A DEFINIR]`/`pendencias` e
+chamar a ferramenta mesmo com lacunas. **Isso é desqualificante para um
+worker sem usuário presente** (a arquitetura assíncrona aprovada não tem
+ninguém pra responder a perguntas no meio da geração) — e, nas 2
+execuções em que chamou, ainda cometeu mais erros de referência
+(etapa↔exceção) que o Sonnet em toda a Etapa 11b (1 erro em 11
+execuções do Sonnet vs. 1 e 3 erros nas 2 execuções do Haiku que
+completaram). **Conclusão: mantido o modelo atual (Sonnet) no worker**,
+conforme a regra já definida pelo usuário ("se a qualidade cair, mantém
+o modelo atual") — o Haiku é mais rápido/barato, mas não é confiável o
+suficiente pra rodar sem supervisão.
+
+## Proposta: geração assíncrona (Etapa 13.1–13.6, substituindo a antiga Etapa 13 única)
+
+Decisão do usuário (2026-10-09): a latência de ~130s é estrutural (não
+compensa perder qualidade/conteúdo real do processo pra tentar cortar
+pra <60s — a Etapa 11b mostrou que o teto estrutural real fica por volta
+de ~130s/~14k tokens com conteúdo completo). Caminho escolhido: geração
+**assíncrona** — o chat responde rápido ("gerando...") e a proposta
+aparece quando o worker terminar, em vez do usuário esperar ~2min
+olhando uma tela parada (e sem depender do timeout de 60s do
+frontend/60s do cliente HTTP da Anthropic pra essa chamada pesada).
+
+### Padrões reaproveitados (nada novo sendo inventado)
+
+O projeto já tem exatamente o par de padrões necessário, usado hoje para
+indexação: `IndexacaoListener` (`@TransactionalEventListener(AFTER_COMMIT)`
++ `@Async("indexacaoExecutor")`, reação imediata) **e**
+`ReindexacaoJob` (`@Scheduled`, rede de segurança que reprocessa
+`PENDENTE`/`ERRO`). A proposta usa a MESMA dupla de padrões para a
+geração estruturada, só com nomes/executor dedicados novos.
+
+### 13.1 — Migrações aditivas
+
+- `StatusRascunho` ganha `GERANDO` e `ERRO_GERACAO` (enum, aditivo — os
+  3 valores atuais `PENDENTE`/`CONFIRMADO`/`DESCARTADO` não mudam de
+  significado; o fluxo legado nunca entra nos dois novos estados).
+- `documento_rascunho.conteudo_html` passa de `NOT NULL` para nullable
+  (`ALTER COLUMN ... DROP NOT NULL`) — só o caminho novo deixa nulo
+  temporariamente enquanto `status=GERANDO`; o caminho legado (e o
+  `@NotBlank` da camada de aplicação nesse caminho) continua sempre
+  preenchendo, sem mudança de comportamento.
+- 2 colunas novas em `documento_rascunho`: `erro_geracao` (text,
+  nullable) e `tentativas_geracao` (int, not null, default 0).
+- **Risco**: baixo — migração pura, nenhum dado existente é tocado,
+  relaxar `NOT NULL` nunca quebra uma linha que já tinha valor.
+- **Testes**: migration up roda sobre uma base com rascunhos legados
+  existentes sem alterar nenhum deles; nenhum rascunho antigo some ou
+  muda de status; tentativa de inserir um rascunho novo sem
+  `conteudo_html` só funciona pelo caminho novo (teste negativo no
+  caminho legado continua exigindo o campo, pela validação da
+  aplicação).
+- **Reversão**: `ALTER COLUMN conteudo_html SET NOT NULL` (só segura se
+  nenhum rascunho ficou com ele nulo — documentar a checagem antes de
+  reverter em produção) + remover as 2 colunas novas e os 2 valores do
+  enum (sem uso, se a feature for desfeita antes de qualquer rascunho
+  chegar a usá-los).
+
+### 13.2 — `ChatModel` dedicado ao worker
+
+Bean novo `chatModelGeracaoEstruturada`, `@ConditionalOnProperty` (flag
+ligada e `anthropic` em `provedores`), com `maxTokens`/`timeout`
+próprios e configuráveis:
+- `bdocs.documentacao-estruturada.geracao.max-tokens` (default `16384`,
+  validado na Etapa 11b).
+- `bdocs.documentacao-estruturada.geracao.timeout-segundos` (default
+  `240`, com margem sobre o pior caso medido ~150s).
+
+O bean `chatModel` existente (chat interativo, usado por TODAS as tools
+de hoje) **não muda em nada** — continua com `maxTokens(8192)` e timeout
+padrão. Esse é o ponto chave de por que o timeout do frontend não
+precisa mudar (ver seção de timeouts abaixo). Aproveitar esse arquivo
+pra corrigir o comentário desatualizado sobre "thinking consumir a
+cota" (achado da Etapa 11 — thinking está desligado).
+
+- **Risco**: baixo — bean novo, isolado, não altera a assinatura nem o
+  comportamento do bean existente.
+- **Testes**: contexto sobe com a flag ligada e desligada (padrão já
+  usado em `ContextLoadsComFlagDocumentacaoEstruturadaLigadaTest`); teste
+  de regressão garantindo que o bean `chatModel` continua com
+  `maxTokens=8192` (nenhuma mudança de comportamento no chat
+  interativo).
+
+### 13.3 — Tool leve de solicitação
+
+Nova classe `DocumentoEstruturadoTools` (padrão de `MacroprocessoTools`:
+`@Component`, `@ConditionalOnProperty`, só exposta na lista de tools do
+`AiServices` quando `FeatureFlags.documentacaoEstruturadaHabilitadaPara(provedorAtual)`
+for true — isso já cobre o caso de o chat estar rodando num provedor
+onde nem a tool leve deveria aparecer).
+
+Dois métodos **leves** (sem o JSON completo como argumento):
+- `solicitarGeracaoDocumentoEstruturado(String tituloSugerido, String instrucoesAdicionais)`
+- `solicitarAtualizacaoDocumentoEstruturado(String documentoIdAlvo, String instrucoesAdicionais)`
+
+Cada um: valida acesso à categoria (igual a `prepararCriacaoDocumento`
+hoje), cria o `RascunhoDocumentoEntity` com `status=GERANDO`,
+`conteudoHtml=null`, `tentativasGeracao=0`; responde ao usuário
+confirmando que a geração começou; publica
+`GeracaoEstruturadaSolicitadaEvent(rascunhoId)` (mesmo padrão de
+`DocumentoAlteradoEvent`).
+
+**Material-fonte da conversa — decisão de desenho**: NÃO vem como
+argumento da tool. Passar o material como parâmetro arriscaria o modelo
+resumir/reformular o material ao "repetir" ele num campo de tool (perda
+de fidelidade, e tokens extra pagos duas vezes). Em vez disso, o worker
+(13.4) lê o **histórico persistido da conversa** (mensagens já salvas no
+banco, pelo `conversaId` do rascunho) diretamente — texto integral,
+verbatim, sem depender do que a tool recebeu.
+
+- **Risco**: baixo — tool nova e isolada; `prepararCriacaoDocumento`
+  (fluxo legado) não é tocado.
+- **Testes**: tool só aparece com flag+provedor corretos (padrão
+  `MacroprocessoToolsTest`/`...DesligadoPorDefaultTest`); rascunho criado
+  com os campos certos; evento só publicado depois do commit.
+
+### 13.4 — Worker de geração
+
+- `GeracaoEstruturadaListener` (`@Async("geracaoEstruturadaExecutor")` +
+  `@TransactionalEventListener(AFTER_COMMIT)`) reage imediatamente ao
+  evento da 13.3.
+- `GeracaoEstruturadaJob` (`@Scheduled`, mesmo padrão do
+  `ReindexacaoJob`) varre rascunhos em `GERANDO` há mais de N minutos
+  (`bdocs.documentacao-estruturada.geracao.timeout-gerando-minutos`,
+  default 5) — rede de segurança para evento perdido ou processo
+  reiniciado no meio.
+- `GeracaoEstruturadaService` faz o trabalho real: monta o material a
+  partir do histórico da conversa; chama `chatModelGeracaoEstruturada`
+  via `AiServices` com a tool REAL (`DocumentoEstruturadoDTO` completo,
+  prompt V1); valida (Bean Validation + `DocumentoEstruturadoValidator`,
+  ambos já existentes, sem alteração); se inválido, devolve os erros ao
+  modelo no MESMO laço fechado (sem usuário no meio — decisão A2 adaptada
+  a um worker) até `tentativas_geracao` atingir
+  `bdocs.documentacao-estruturada.geracao.max-tentativas` (default 3).
+  - **Sucesso**: renderiza o HTML (`EstruturaDocumentoHtmlRenderer`, já
+    existe, sem alteração), grava `conteudoHtml`/`conteudoEstruturado`/
+    `versaoSchema`, muda `status` para `PENDENTE` — a partir daqui a
+    confirmação funciona EXATAMENTE como hoje.
+  - **Falha** (tentativas esgotadas, exceção da API, `finishReason=LENGTH`
+    sem chamada de ferramenta utilizável): grava `erroGeracao` com
+    mensagem clara, muda `status` para `ERRO_GERACAO`.
+- **Risco**: médio — é a peça de lógica nova mais substancial, mas
+  reaproveita validator/renderer/entidades existentes sem alterá-los.
+- **Testes**: sucesso de primeira; sucesso após 1 correção (laço A2);
+  esgotamento de tentativas → `ERRO_GERACAO`; exceção da API →
+  `ERRO_GERACAO`; nenhuma mudança observável no fluxo síncrono legado
+  (mesmo teste de regressão do `DocumentoServiceTest` de sempre).
+
+### 13.5 — Endpoint de leitura + regra de confirmação
+
+- `PropostaDocumento` (DTO do `GET /chat/conversas/{id}/rascunho-pendente`,
+  **já existe**) ganha campos aditivos: `status`
+  (`GERANDO|PENDENTE|ERRO_GERACAO`) e `erroGeracao` (nullable) — contrato
+  antigo preservado, só cresce (mesmo padrão de compat usado em
+  `DocumentoResponseDTO` ao longo deste plano).
+- Confirmação (`confirmarRascunhoPendente`/rota REST) passa a checar
+  explicitamente `status == PENDENTE` antes de aplicar — hoje isso é
+  implícito (só existe um estado possível); com os novos estados, uma
+  tentativa de confirmar em `GERANDO`/`ERRO_GERACAO` precisa devolver um
+  erro claro em vez de aplicar algo incompleto/inválido.
+- **Risco**: baixo — campo novo opcional, nenhum consumidor existente
+  quebra.
+- **Testes**: testes de controller existentes continuam passando sem
+  tocar nos campos novos; tentar confirmar um rascunho em
+  `GERANDO`/`ERRO_GERACAO` retorna erro claro.
+
+### 13.6 — Frontend: polling no painel existente
+
+- `PropostaDocumento` (tipo TS) ganha `status`/`erroGeracao` (aditivo).
+- `CenterContent` (`useChat.ts`) passa a tratar `status==='GERANDO'`
+  mostrando um indicador de "gerando documento estruturado..." no MESMO
+  painel que já existe para `documentDraft`, e `ERRO_GERACAO` mostrando
+  a mensagem de erro com opção de tentar de novo.
+- Ao receber a confirmação textual de "gerando" na mensagem do chat, um
+  polling (`setInterval`, reaproveitando `chatService.getPendingDraft`
+  **já existente** — nenhum endpoint novo) passa a checar o status a
+  cada poucos segundos, parando quando virar `PENDENTE` ou
+  `ERRO_GERACAO`. **Sem WebSocket/SSE**, como decidido.
+- **Risco**: baixo-médio (UI nova, mas só ativa quando o backend
+  sinaliza `GERANDO`, que só acontece com flag+provedor ligados).
+- **Como validar**: manualmente no browser com a flag ligada — enviar
+  pedido de documento estruturado, confirmar que aparece "gerando...",
+  que o painel atualiza sozinho (sem reload) quando o worker termina, e
+  que um erro de geração aparece de forma clara.
+
+### Timeouts — confirmação pedida
+
+**O timeout de 60s do frontend (`SEND_MESSAGE_TIMEOUT_MS`) NÃO precisa
+mudar.** Confirmado: com a geração movida para o worker, a chamada
+SÍNCRONA do turno de chat volta a ser só a tool LEVE (poucos parâmetros
+escalares, sem o JSON grande) — do mesmo tamanho/latência das tools que
+já existem hoje (`listarMinhasCategorias`, `prepararCriacaoDocumento`),
+que já funcionam dentro do timeout atual. O `maxTokens`/`timeout` maiores
+(validados na Etapa 11b: 16384/240s) passam a valer **só** no bean
+dedicado do worker (13.2), nunca no bean do chat interativo — por isso
+não há mais nenhum ponto do fluxo síncrono que precise de um timeout
+maior que o de hoje.
+
 
 ## Explicitamente adiado (fora do escopo desta entrega)
 
@@ -425,3 +705,371 @@ verificação.
   passando, 0 skipped, 0 falhas, 0 erros** (era 175 — aumentou 4,
   consistente). Nenhuma asserção de teste existente alterada
   (`DocumentoServiceTest.java`: `31 insertions(+), 0 deletions(-)`).
+
+### Etapa 10 — Investigação: function calling com POJO aninhado (2026-10-08/09) — CONCLUÍDA
+
+Harness descartável (`src/test/java/.../scratchetapa10/Etapa10Investigacao.java`,
+**nunca commitado, deletado ao final da investigação**), chamando o
+`ChatModel` real do provedor (mesma config de `ChatModelConfig`) via
+`AiServices` com uma tool de captura (`registrarDocumentoEstruturado(DocumentoEstruturadoDTO)`)
+e o material de exemplo (processo de reembolso) fornecido pelo usuário.
+
+**Incidente de diagnóstico (chave Anthropic)**: as primeiras tentativas
+retornaram `401 invalid x-api-key` mesmo após o usuário recriar a chave.
+Diagnóstico (sem imprimir valores, só tamanho/prefixo): o `.env` e o
+registro `HKCU\Environment` (escopo User do Windows) tinham a chave nova
+e correta (`sk-ant-...`); mas o **processo desta sessão** (herdado antes
+da correção) continha um `ANTHROPIC_API_KEY` de 31 caracteres, formato
+`apikey_...`, que por coincidência bate exatamente com um valor
+hardcoded antigo em `.idea/workspace.xml` (run config do IntelliJ) —
+provavelmente a origem do placeholder original. Reiniciar o terminal não
+reinicia a árvore de processo desta sessão, então a correção nunca
+chegou até os comandos executados aqui. **Correção**: o harness passou a
+ler as chaves diretamente do `.env` (parse manual: ignora `#`/linha
+vazia, remove `\r`, `trim`, remove aspas íguais nas duas pontas — mesma
+semântica do Docker Compose), nunca de `System.getenv`. Isso resolveu o
+401. Dois incidentes de impressão acidental de valor de chave ocorreram
+durante o diagnóstico (um `xxd` com coluna ASCII, um `grep` sem máscara)
+e foram reportados ao usuário no momento em que aconteceram.
+
+- **Gemini (`gemini-3.8-flash`, `langchain4j-google-ai-gemini:1.18.0`) —
+  4/4 execuções com o DTO aninhado + 1/1 execução com uma tool simples de
+  3 parâmetros escalares (mesma assinatura de `prepararCriacaoDocumento`)
+  falharam de forma IDÊNTICA**, antes de qualquer avaliação de
+  schema/campos ser possível:
+  ```
+  400 INVALID_ARGUMENT: Function call is missing a thought_signature in
+  functionCall parts. This is required for tools to work correctly...
+  ```
+  Causa: modelos Gemini "thinking" exigem que uma chamada de função
+  ecoe um `thought_signature` gerado pelo modelo; o `AiServices` do
+  langchain4j 1.18.0 não propaga esse campo. **O teste com a tool simples
+  (item 3 pedido pelo usuário) confirma que isso NÃO é um problema do
+  DTO aninhado** — é uma quebra genérica de qualquer tool-calling via
+  `AiServices` + Gemini nesta versão do langchain4j. **Na prática, isso
+  significa que o fluxo de chat ATUAL (produção, tool
+  `prepararCriacaoDocumento`) já quebraria hoje se alguém configurasse
+  `AI_CHAT_PROVIDER=gemini`** — não é uma regressão desta entrega, é uma
+  incompatibilidade pré-existente entre o Gemini "thinking" e
+  `langchain4j-google-ai-gemini:1.18.0` que só nunca foi notada porque o
+  ambiente de produção sempre usou outro provedor. **Decisão do
+  usuário**: Gemini fica fora do escopo de produção (só Anthropic);
+  nenhuma correção/atualização de dependência foi tentada por causa
+  disso — achado só registrado.
+
+- **Anthropic (`claude-sonnet-5`) — 5/5 execuções concluídas (chave
+  corrigida via leitura direta do `.env`), nenhum 401, nenhum erro de
+  schema**:
+  - **2/5 (execuções 1 e 3) tiveram sucesso completo**: ferramenta
+    chamada, DTO aninhado desserializado corretamente, **0 erros** do
+    `DocumentoEstruturadoValidator` nas duas. Comparando com o gabarito:
+    "Carla" nunca apareceu como responsável (convertida para "Analista
+    Financeiro"/"[A DEFINIR]" dependendo da execução); todos os 5 campos
+    ausentes do gabarito (limite de almoço, valor de aprovação do
+    diretor, critério de data de pagamento, SLA, política formal) foram
+    corretamente marcados em `pendencias`, nunca inventados com valor
+    concreto; as 5 regras de negócio esperadas (bebida alcoólica, CNPJ
+    diferente, nota rasurada, limite de almoço, aprovação do diretor)
+    foram capturadas nas duas execuções; a decisão condicional do
+    diretor (acima de valor "[A DEFINIR]") foi modelada corretamente nas
+    duas. A execução 3 modelou a recusa por CNPJ/rasura como uma decisão
+    formal com retorno (além da do gestor) — bate melhor com "pelo menos
+    2 decisões com retorno" do gabarito do que a execução 1 (que tratou
+    isso como exceção, uma escolha de modelagem defensável, não um erro).
+  - **3/5 (execuções 2, 4 e 5) não produziram nada avaliável**: a
+    resposta consumiu os 8192 tokens de saída (`maxTokens` configurado,
+    igual produção) e terminou com `finishReason=LENGTH` sem completar
+    nenhuma chamada de ferramenta nem texto — nem erro, nem documento,
+    nem chamada de tool. **Achado novo, relevante para a Etapa 11**: o
+    comentário já existente em `ChatModelConfig` sobre `maxTokens(8192)`
+    ("dá folga de sobra pro thinking + a resposta") não se confirma para
+    este DTO — com um documento estruturado completo, 3 de 5 tentativas
+    esgotaram o orçamento antes de produzir qualquer saída utilizável
+    (60% de taxa de falha por orçamento de tokens, não por schema/
+    alucinação). A Etapa 11 (orçamento de tokens, já prevista no plano)
+    precisa necessariamente aumentar esse limite e/ou considerar
+    streaming incremental por seção antes de habilitar isso em produção.
+  - **Nenhuma alucinação de FATO em campo de conteúdo** nas 2 execuções
+    bem-sucedidas (nenhum valor numérico/data/nome de sistema inventado
+    fora do material). Metadados sem `@NotNull` (confidencialidade,
+    periodicidadeRevisaoMeses, donoProcesso, aprovador) às vezes vieram
+    com um valor assumido (ex.: `INTERNO`, `12` meses) em vez de `null`
+    — a execução 3 chegou a assumir e AINDA registrar isso em
+    `pendencias` ("assumido INTERNO por padrão, não confirmado"). Vale
+    considerar, na Etapa 12 (prompt v2), instruir explicitamente a
+    deixar metadado não inferível como `null` em vez de assumir default.
+
+**Decisão de escopo resultante (ver seção Flags acima)**: só Anthropic em
+produção (`bdocs.documentacao-estruturada.provedores=anthropic`),
+provedor padrão do código continua `gemini` (troca é config de deploy),
+Etapa 11 medida só com Anthropic, e deve necessariamente revisitar o
+`maxTokens` por causa do achado de 60% de esgotamento de orçamento acima.
+
+### Etapa 11 — Investigação: orçamento de tokens (2026-10-09) — CONCLUÍDA
+
+Harness descartável (nunca commitado, deletado ao final), reutilizando o
+`ChatModel` real da Anthropic (chave lida só do `.env`, nunca de
+variável de ambiente — ver incidente da Etapa 10) com um
+`ChatModelListener` medindo, por rodada da conversa: `finishReason`,
+tokens de entrada/saída e latência (`System.nanoTime`). Duas
+configurações testadas, 5 execuções cada (+ 1 execução bônus da config A
+por um erro de repasse de parâmetro do Gradle, descartado sem custo —
+só mais um dado válido). `maxTokens=8192` (linha de base) já tinha sido
+medido na Etapa 10 (2/5 sucesso completo, 3/5 sem nenhuma saída
+utilizável).
+
+- **1. Onde os tokens foram gastos**: **thinking estendido NÃO está
+  ativo** na configuração atual (`ChatModelConfig` nunca chama
+  `.thinkingType(...)`; builder da Anthropic no langchain4j 1.18.0 só
+  ativa thinking se configurado explicitamente) — confirmado por medição
+  direta (`aiMessage.thinking()` vazio em 100% das rodadas, Etapas 10 e
+  11). **O comentário já existente no código** (`ChatModelConfig`, linhas
+  36–41) atribuindo o risco de `maxTokens(8192)` ao "thinking consumir a
+  cota" **não corresponde à configuração real** — thinking está
+  desligado; quem consome o orçamento inteiro é o próprio JSON do
+  documento estruturado (a 1ª rodada da conversa, a que gera a chamada
+  da ferramenta). Vale corrigir esse comentário quando o código for
+  tocado, para não induzir a equipe a investigar a causa errada no
+  futuro.
+- **2. Config A (`maxTokens=16384`, prompt igual à Etapa 10), 6
+  execuções**: **6/6 produziram um documento** (nenhuma falha total,
+  contra 3/5 falhas na linha de base de 8192). Validador limpo em 5/6
+  (1 execução teve 3 erros de referência — opções de decisão apontando
+  para IDs de exceção em vez de etapa; é exatamente o tipo de erro que a
+  decisão A2 prevê corrigir via novo turno, não uma falha do validador).
+  Tokens de saída da 1ª rodada: 16384/16384/16079/16339/16384/12782
+  (média ≈ 15 725 — 3 das 6 bateram exatamente no teto). **Latência
+  total média ≈ 171,5 s** (mín. 120,5 s, máx. 205,6 s) — a 1ª rodada
+  isolada já leva 111–150 s. A ferramenta foi chamada 2x (resubmissão
+  redundante do mesmo documento) em 3/6 execuções.
+- **3. Latência vs. timeouts atuais**: o cliente HTTP da Anthropic no
+  langchain4j (`AnthropicClient`, verificado por decompilação) usa
+  **readTimeout padrão de 60s** quando `ChatModelConfig` não chama
+  `.timeout(...)` (caso atual de produção) — e o frontend
+  (`chatService.ts`, `SEND_MESSAGE_TIMEOUT_MS`) usa os **mesmos 60000ms**
+  para a rota de envio de mensagem. **Os dois timeouts atuais são
+  incompatíveis com a latência medida** (120–206s) — mesmo nas execuções
+  bem-sucedidas, a chamada à Anthropic sozinha estouraria o timeout de
+  60s do cliente HTTP do langchain4j antes de terminar. Nenhum timeout
+  de servidor (Tomcat/Spring) explícito foi encontrado em
+  `application.yaml`/`compose.yml` (só o `timeout: 5s` do healthcheck do
+  Docker, que é outra coisa).
+- **4. Config B (`maxTokens=16384` + instrução de concisão no prompt), 5
+  execuções**: **5/5 produziram um documento, 5/5 validador limpo** (0
+  erros, melhor que a config A). Tokens de saída da 1ª rodada:
+  14485/16149/15027/13149/16384 (média ≈ 15 039 — **4,4% menor** que a
+  config A). **Latência total média ≈ 146,1 s** (mín. 128,3 s, máx.
+  173,5 s) — **≈15% mais rápida** que a config A. Ferramenta chamada 2x
+  em apenas 1/5 (vs. 3/6 na config A). A instrução de concisão (já
+  decidida para a Etapa 12) ajuda em todas as métricas medidas, sem
+  nenhuma contrapartida observada.
+- **5. Correção mínima recomendada** (nenhuma implementada ainda):
+  1. Subir `maxTokens` de 8192 para 16384 no bean **compartilhado**
+     `ChatModelConfig.chatModel()` (branch Anthropic). Impacto no fluxo
+     legado: nenhum esperado — é só o teto, Anthropic cobra e para pelos
+     tokens realmente gerados, e os fluxos legados hoje terminam bem
+     antes de 8192; só protege contra um caso raro de geração longa
+     demais no fluxo legado custar mais antes de parar (risco baixo, já
+     seria um sintoma de bug noutro lugar).
+  2. Definir `.timeout(Duration.ofSeconds(240))` explícito no builder da
+     Anthropic em `ChatModelConfig` (hoje usa o default de 60s/leitura) —
+     com margem sobre o pior caso medido (205,6 s).
+  3. Subir `SEND_MESSAGE_TIMEOUT_MS` em `chatService.ts` de 60000 para
+     algo como 240000 — mesmo padrão já usado hoje (constante dedicada só
+     para essa rota, comentário já existente reconhecendo que a rota pode
+     "legitimamente levar 10-40s+"; só o valor estava desatualizado para
+     este novo fluxo).
+  4. Adotar a instrução de concisão (config B) no prompt v2 da Etapa 12 —
+     já era uma decisão do usuário; esses números confirmam que ela
+     ajuda (tokens, latência e taxa de resubmissão redundante, todas
+     melhores).
+- **6. Tratamento de `finishReason=LENGTH` sem saída utilizável**
+  (proposta, não implementada): quando a resposta da Anthropic terminar
+  em `LENGTH` e nem texto nem chamada de ferramenta tiverem sido
+  produzidos (caso observado 3x na linha de base de 8192, zero vezes em
+  16384 nesta amostra, mas não é garantido que nunca aconteça), a tool
+  estruturada (Etapa 13) deveria devolver uma mensagem clara ao usuário
+  ("o processo descrito é muito longo/complexo para estruturar de uma
+  vez — tente dividir em partes menores") em vez de deixar cair num erro
+  genérico ou no timeout do frontend.
+
+**Nenhuma dessas correções foi implementada nesta etapa** (investigação
+apenas, nada comitado) — ficam para quando o usuário aprovar a
+implementação (provavelmente junto da Etapa 13, que é quem de fato monta
+o fluxo de produção).
+
+### Etapa 11b — Reduzir o tamanho da saída (2026-10-09) — CONCLUÍDA, meta NÃO atingida
+
+Usuário não aprovou a correção da Etapa 11 (subir `maxTokens`/timeout) —
+motivo: ~15k tokens de saída para um processo PEQUENO deixa <10% de
+margem no teto de 16.384 (processos reais maiores estourariam), e a
+latência é proporcional aos tokens de saída (a alavanca certa é gerar
+MENOS, não esperar mais). Meta definida: **<6.000 tokens de saída e
+<60s**, mesma qualidade vs. gabarito. Harness novo, descartável (nunca
+commitado, deletado ao final), reaproveitando os `DocumentoEstruturadoDTO`
+já capturados na Etapa 11 (sem gastar novas chamadas) para as análises 1–3,
+e 10 novas execuções (2 variações × 5) para a análise 4.
+
+- **1. Chamada dupla (por que a tool é chamada 2x em 20–50% das
+  execuções)**: a mensagem de retorno original da tool
+  ("Documento estruturado registrado com sucesso.") não desencoraja uma
+  segunda chamada — o modelo às vezes reinterpreta isso como "ok, pode
+  prosseguir/refinar" e chama de novo com o documento revisado. Custo
+  medido da chamada redundante (Etapa 11): ~3.700–5.900 tokens de saída
+  extra (25–40% acima do custo da 1ª chamada) e ~30–45s de latência
+  extra. **Correção testada e CONFIRMADA**: system prompt explícito
+  ("você tem APENAS UMA oportunidade de chamar esta ferramenta... chamar
+  duas vezes é um erro") + retorno da tool reforçando
+  ("NÃO chame esta ferramenta de novo nesta conversa") **eliminou 100%
+  das chamadas duplas nas 10 execuções da seção 4** (0/10, contra 3/6 e
+  1/5 antes).
+- **2. Anatomia do JSON por seção** (estimativa calibrada: tokens reais
+  da 1ª rodada ÷ tamanho em caracteres do JSON compacto do documento
+  capturado — ratio variou 1.32–1.58 tok/char entre amostras, então são
+  proporções direcionais, não uma contagem exata de tokens por campo):
+  **`fluxo` (etapas) domina com 39–45% do total** em todas as 3 amostras
+  analisadas — de longe a maior seção. Depois: `regrasNegocio` (11–15%),
+  `raci` (9–12%), `pendencias` (8–10%), `excecoes` (7–8%), metadados
+  (6–8%). `sipoc`, `riscosControles`, `glossario`,
+  `sistemasFerramentas`, `indicadores`, `documentosRelacionados`
+  somados não passam de ~7%. Tamanho médio de texto livre já é modesto
+  (etapa.descricao 86–132 caracteres, ~1 frase) — não há "gordura" óbvia
+  de verbosidade por campo; o custo é estrutural (10 campos por etapa ×
+  9–11 etapas, cada um repetindo nomes de chave no JSON).
+- **3. Redundância do schema** (medido nas 3 amostras, sem alterar o
+  validador):
+  - **RACI.responsavel é 100% idêntico a etapa.responsavel em 29/29
+    linhas verificadas** (3/3 amostras, todas as linhas) — redundância
+    total confirmada, zero perda de informação se for derivado da etapa
+    em vez de pedido de novo ao modelo. Representa ~26–28% do bloco
+    RACI (~370–525 tokens estimados).
+  - **SIPOC não é uma derivação limpa** das entradas/saídas das etapas —
+    só 0–67% de overlap textual exato entre as 3 amostras (o modelo usa
+    frases de nível macro, às vezes com texto ligeiramente diferente do
+    das etapas). Não é um candidato seguro para remoção/derivação
+    automática sem risco de perda de nuance.
+  - Limite de tamanho nas descrições (`@Description` com "máx. 1-2
+    frases") e listas macro vazias quando a informação já está nas
+    etapas: **testado via instrução de prompt** (ver Variação abaixo),
+    não via alteração do schema/validador.
+  - Formatação do JSON (indentado vs. compacto): não é controlável pelo
+    chamador — a Anthropic decide o formato dos argumentos da tool
+    internamente; não investigado mais a fundo (fora do que o
+    chamador pode ajustar).
+- **4. Duas variações testadas, 5 execuções cada, mesmo material/gabarito,
+  `maxTokens=16384` fixo nas duas** (comparação com a Etapa 11, Config B:
+  tokens méd. ≈15.039, latência méd. ≈146,1s, chamada dupla 1/5, validador
+  limpo 5/5):
+
+  | | Tokens saída (méd.) | Latência total (méd.) | Chamada dupla | Validador limpo |
+  |---|---|---|---|---|
+  | **Variação 1** — só prompt mais rigoroso (schema IGUAL à produção: instrução de uma única chamada + anti-redundância nas listas macro + conciseness) | **13.897** (−7,6% vs. Config B) | **129,0s** (−11,6%) | **0/5** | 5/5 |
+  | **Variação 2** — Variação 1 + schema sem `RaciEntryDTO.responsavel` (derivado da etapa, reconstruído e revalidado com o validador real) | 14.380 (+3,5% vs. Variação 1) | 138,3s (+7,2% vs. Variação 1) | 0/5 | 5/5 (via reconstrução) |
+
+  **Achado inesperado**: remover o campo redundante do schema (Variação
+  2) **não melhorou nada — ficou ligeiramente PIOR** que só ajustar o
+  prompt (Variação 1), dentro da variância natural entre execuções (a
+  variação 2 teve mais dispersão: 12.985–16.181 vs. 13.796–14.010 da
+  variação 1). A economia teórica de ~370–525 tokens do campo
+  `responsavel` é pequena demais pra se destacar da variância normal de
+  execução a execução (~1.000–3.000 tokens), e não justifica a
+  complexidade adicional (DTO duplicado, lógica de reconstrução, caminho
+  de validação paralelo) **sem nenhum ganho mensurável**. **Variação 1
+  (só prompt, zero mudança de schema) é claramente a recomendada.**
+
+- **Meta (<6.000 tokens / <60s) NÃO atingida.** Mesmo a melhor variação
+  (13.897 tokens méd., 129s méd.) fica **~2,3x acima da meta de tokens e
+  ~2,1x acima da meta de latência**. Causa estrutural: `fluxo` domina o
+  custo (39–45%) e já é razoavelmente conciso por item — não há
+  redundância fácil de cortar sem perder informação real do processo
+  (cada etapa precisa mesmo de id/nome/descrição/responsável/
+  entradas/saídas/regras aplicáveis pra ser útil). Reduzir mais exigiria
+  ou perder informação, ou uma reestruturação maior (ex.: gerar o
+  documento em 2+ chamadas de ferramenta menores — etapas separadas de
+  metadados e de fluxo — não testado aqui, mais tokens de entrada
+  repetidos por chamada, complexidade de protocolo maior; fica como
+  ideia não testada para o futuro, não recomendada agora).
+
+- **5. Timeouts no caminho da requisição** (visibilidade limitada ao que
+  está nos dois repositórios):
+  - Frontend (`chatService.ts`): rota de envio de mensagem usa
+    `SEND_MESSAGE_TIMEOUT_MS=60000`; demais rotas usam o default
+    `VITE_API_TIMEOUT` (15000ms).
+  - Frontend chama o backend **diretamente** (`VITE_API_BASE_URL`) — o
+    `nginx.conf` do frontend só serve os arquivos estáticos da SPA e um
+    healthcheck, **não** faz proxy de `/api` (sem `proxy_pass`, sem
+    `proxy_read_timeout`) — não é um timeout no caminho desta chamada.
+  - Backend: nenhum `server.*`/Tomcat timeout explícito em
+    `application.yaml`; cliente HTTP do langchain4j-anthropic usa
+    **60s de readTimeout por padrão** (decompilado na Etapa 11,
+    `ChatModelConfig` não sobrescreve).
+  - **Não visível pelo repositório — preciso que você verifique**: nenhum
+    load balancer, proxy reverso, API gateway ou timeout de plataforma
+    de hospedagem (Railway/Render/Fly/etc., se for o caso) aparece em
+    nenhum dos dois repositórios. Esses, se existirem na infraestrutura
+    real de produção, não foram e não puderam ser investigados aqui.
+
+**Alternativa proposta (geração assíncrona), conforme pedido — SEM
+implementar**: em vez do chat esperar sincronamente ~130s pela resposta
+completa da Anthropic, o backend aceitaria o pedido, devolveria
+imediatamente algo como "gerando a proposta de documento estruturado,
+isso pode levar alguns minutos..." e dispararia a chamada de IA em segundo
+plano (ex.: `@Async`/thread pool dedicado); o rascunho ficaria com um
+status "gerando" até a IA terminar, e o usuário seria avisado (polling
+periódico do frontend, ou push via WebSocket/SSE) quando a proposta
+estivesse pronta para revisão. **Impacto estimado**: elimina o problema
+de timeout por completo (não há mais limite de 60s/240s a respeitar
+nesse fluxo) e resolve a UX de espera percebida (usuário não fica
+olhando uma tela parada por 2+ minutos). Custo: trabalho de backend
+(fila/async + nova coluna de status + endpoint ou canal de notificação)
+e de frontend (UI de "gerando..." + mecanismo de verificação/notificação)
+específicos só para este fluxo — escopo moderado, não trivial, mas bem
+menor que uma reestruturação do schema. Precisaria de um teto de
+segurança (ex.: 5 min) para não deixar jobs presos indefinidamente, e de
+um plano para o caso de falha (reaproveitar o loop de correção da
+decisão A2 em segundo plano, sem a presença do usuário no momento).
+
+**Pendência registrada para quando `ChatModelConfig` for tocado (Etapa
+13)**: corrigir o comentário sobre `maxTokens(8192)` que atribui o risco
+ao "thinking" consumir a cota — thinking está desligado hoje (achado da
+Etapa 11), o comentário está desatualizado/incorreto.
+
+### Etapa 13.1 — Migrações aditivas p/ geração assíncrona (2026-10-09)
+
+- `V13__add_geracao_assincrona_rascunho.sql`: `documento_rascunho.conteudo_html`
+  passa a nullable (`DROP NOT NULL`); 4 colunas novas
+  (`erro_geracao` text, `tentativas_geracao` int not null default 0,
+  `instrucoes_adicionais` text, `reservado_em` timestamp); CHECK
+  constraint `chk_rascunho_html_obrigatorio_se_pendente_ou_confirmado`
+  (R6) garantindo a nível de banco que `conteudo_html` nunca é nulo
+  quando `status IN ('PENDENTE','CONFIRMADO')`.
+- `StatusRascunho` ganha `GERANDO`/`ERRO_GERACAO` (aditivo — os 3
+  valores existentes não mudam de significado).
+- `RascunhoDocumentoEntity` ganha os 4 campos novos; `conteudoHtml`
+  deixa de ser `nullable=false` no mapeamento JPA (acompanha a coluna).
+- `IRascunhoDocumentoRepository`: `findFirstByConversaIdAndStatusInOrderByCriadoEmDesc`
+  (R1 — "proposta ativa" agora cobre PENDENTE/GERANDO/ERRO_GERACAO);
+  `reservarParaProcessamento` (R3 — UPDATE condicional atômico: só
+  reserva se `status=GERANDO`, tentativas < limite, e sem reserva ativa
+  ou reserva expirada); `finalizarComSucesso`/`finalizarComErro` (R1 —
+  UPDATE condicional que só aplica se `status` ainda for `GERANDO`,
+  protegendo contra o usuário ter descartado no meio da geração).
+- `IMensagemRepository.findByConversaIdAndCriadoEmLessThanEqualOrderByCriadoEmAsc`
+  (R4 — material-fonte do worker é o histórico até o momento da
+  solicitação, nunca mensagens de turnos posteriores).
+- **Testes novos (12)**: `IRascunhoDocumentoRepositoryGeracaoAssincronaTest`
+  — nullable funciona, CHECK constraint rejeita/permite corretamente
+  (com `jdbcTemplate` + `EntityManager.clear()` pra evitar cache
+  obsoleto do Hibernate ao misturar JDBC puro com JPA na mesma
+  transação), reserva atômica só ganha uma vez / falha com tentativas
+  esgotadas / falha se não estiver mais GERANDO / reganha após a reserva
+  anterior expirar, finalização de sucesso/erro só aplica em GERANDO e
+  não sobrescreve um rascunho DESCARTADO no meio da geração (R1),
+  "proposta ativa" acha a mais recente entre os estados ativos.
+- **Desvio da investigação**: nenhum dos exemplos anteriores do plano
+  usava um `conversa_id` aleatório sem uma `ConversaEntity` real — só
+  descobri a FK `fk_documento_rascunho_conversa` (pré-existente, V5) ao
+  rodar os testes; corrigido criando uma conversa real em cada teste.
+- Suíte completa (execução real): **191/191 passando, 0 skipped, 0
+  falhas, 0 erros** (era 179 — aumentou 12, consistente com os 12 testes
+  novos). Nenhum teste existente alterado.
