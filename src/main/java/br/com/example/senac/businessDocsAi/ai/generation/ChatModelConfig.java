@@ -113,6 +113,42 @@ public class ChatModelConfig {
                 .modelName(anthropicModelName)
                 .maxTokens(maxTokens)
                 .timeout(Duration.ofSeconds(timeoutSegundos))
+                .listeners(java.util.List.of(new GeracaoEstruturadaCustoListener()))
                 .build();
+    }
+
+    // R3: loga tokens de entrada/saída, finishReason e latência por chamada à Anthropic —
+    // NUNCA o conteúdo (nem a mensagem enviada, nem o documento gerado). rascunhoId vem do
+    // MDC (GeracaoEstruturadaService.processar() seta antes de chamar o modelo) — correlaciona
+    // os logs de uma mesma geração sem precisar passar o ID por nenhum outro caminho.
+    private static class GeracaoEstruturadaCustoListener implements dev.langchain4j.model.chat.listener.ChatModelListener {
+        private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GeracaoEstruturadaCustoListener.class);
+        private long inicioRodadaNanos;
+
+        @Override
+        public void onRequest(dev.langchain4j.model.chat.listener.ChatModelRequestContext ctx) {
+            inicioRodadaNanos = System.nanoTime();
+        }
+
+        @Override
+        public void onResponse(dev.langchain4j.model.chat.listener.ChatModelResponseContext ctx) {
+            long latenciaMs = (System.nanoTime() - inicioRodadaNanos) / 1_000_000;
+            var tokenUsage = ctx.chatResponse().tokenUsage();
+            log.info(
+                    "Geração estruturada [rascunhoId={}]: finishReason={} tokensEntrada={} tokensSaida={} latenciaMs={}",
+                    org.slf4j.MDC.get("rascunhoId"), ctx.chatResponse().finishReason(),
+                    tokenUsage != null ? tokenUsage.inputTokenCount() : null,
+                    tokenUsage != null ? tokenUsage.outputTokenCount() : null,
+                    latenciaMs
+            );
+        }
+
+        @Override
+        public void onError(dev.langchain4j.model.chat.listener.ChatModelErrorContext ctx) {
+            log.warn(
+                    "Geração estruturada [rascunhoId={}]: erro na chamada de IA: {}",
+                    org.slf4j.MDC.get("rascunhoId"), ctx.error().getClass().getSimpleName()
+            );
+        }
     }
 }

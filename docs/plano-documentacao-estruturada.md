@@ -97,7 +97,7 @@ usuário.
 | 13.1 | Migrações aditivas p/ geração assíncrona (`StatusRascunho` +2 valores, `conteudo_html` nullable, 4 colunas novas) | ✅ concluída — **substitui a antiga "Etapa 13" única** (ver "Proposta — geração assíncrona" abaixo) |
 | 13.2 | `ChatModel` dedicado ao worker de geração (maxTokens/timeout próprios, não toca o `chatModel` do chat interativo) | ✅ concluída |
 | 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo + R1 nas tools legadas + confirmação estruturada (B3) | ✅ concluída |
-| 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ⏳ pendente |
+| 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ✅ concluída |
 | 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ⏳ pendente |
 | 13.6 | Frontend: polling (reaproveitando `getPendingDraft` existente) + estado "gerando"/erro no painel | ⏳ pendente |
 | 14 | Metadados novos no chunk do RAG | ⏳ pendente |
@@ -1204,3 +1204,58 @@ branca, nunca chama a API de verdade neste contexto de teste) via
 `@TestPropertySource`. Revalidado localmente com `ANTHROPIC_API_KEY`
 explicitamente removida do ambiente (replicando as condições do CI) —
 214/214 confirmado sem nenhuma chave real presente.
+
+### Etapa 13.4 — Worker de geração (2026-10-09)
+
+- **`GeracaoEstruturadaSystemPrompt`**: texto "V1" validado na Etapa
+  11b (única chamada + anti-redundância + concisão), independente do
+  `RagSystemPrompt` do chat interativo.
+- **`GeracaoEstruturadaService`** (`@ConditionalOnProperty`, mesmo
+  padrão das demais peças): `processar(rascunhoId)` — reserva atômica
+  (R3), monta o material (R4: histórico persistido até o momento da
+  solicitação + anexos/áudio já extraídos em `MensagemEntity.conteudo`
+  + instruções adicionais), checa o limite de tamanho (R4 — vira
+  `ERRO_GERACAO` com mensagem clara, sem nem chamar a IA), chama a IA
+  com um laço de correção interno (decisão A2 adaptada: até 2
+  correções por tentativa, na MESMA `ChatMemory` efêmera — nunca
+  persistida), valida (Bean Validation + `DocumentoEstruturadoValidator`),
+  renderiza o HTML e finaliza com sucesso ou erro (ambos via UPDATE
+  condicional — R1). Exceção na chamada de IA ou documento inválido
+  após as correções: vira `ERRO_GERACAO` SÓ se `tentativasGeracao` (R3,
+  reservas entre o listener e o job) já esgotou o limite; senão, fica
+  em `GERANDO` pro job de segurança tentar de novo.
+- **`gerarDocumentoValidado` extraído como método `protected`** de
+  propósito — permite testar a ORQUESTRAÇÃO (reserva/limite de
+  material/decisão retentar-vs-desistir/finalização) com um `spy`
+  substituindo só essa chamada, sem precisar de um `ChatModel` fake
+  reproduzindo o protocolo inteiro de tool-calling do langchain4j (a
+  integração de verdade com esse exato prompt/schema já foi validada
+  empiricamente contra a API real nas Etapas 10/11/11b).
+- **`ChatModelConfig.chatModelGeracaoEstruturada`** ganhou um
+  `ChatModelListener` (R3) que loga `finishReason`/tokens de entrada e
+  saída/latência por chamada — NUNCA o conteúdo — usando `MDC` pra
+  correlacionar os logs de uma geração pelo `rascunhoId` (setado por
+  `GeracaoEstruturadaService.processar` antes de chamar a IA).
+- **`GeracaoEstruturadaListener`**/**`GeracaoEstruturadaJob`**: mesmo
+  par de padrões já usado pra indexação (`IndexacaoListener` +
+  `ReindexacaoJob`) — reação imediata via
+  `@TransactionalEventListener(AFTER_COMMIT)` + `@Async` num executor
+  dedicado (`geracaoEstruturadaExecutor`, `AsyncConfig`), e um
+  `@Scheduled` como rede de segurança pra rascunhos presos em `GERANDO`
+  (evento perdido ou processo reiniciado no meio). A reserva atômica
+  (R3) garante que os dois nunca processam o mesmo rascunho ao mesmo
+  tempo.
+- **Testes novos (19)**: `GeracaoEstruturadaServiceTest` (14 —
+  orquestração via `spy`: reserva falha, material grande, sucesso,
+  resultado descartado em silêncio quando não está mais `GERANDO`,
+  inválido com/sem tentativas esgotadas, exceção com/sem tentativas
+  esgotadas; validação Bean+semântica sem IA; `FerramentaCaptura`
+  isolada; `montarMaterial` com/sem instruções adicionais);
+  `GeracaoEstruturadaListenerTest` (1); `GeracaoEstruturadaJobTest`
+  (2); `GeracaoEstruturadaBeansDesligadoPorDefaultTest` (1) +
+  `...LigadoComAFlagTest` (1) — existência de todas as peças novas por
+  flag, incluindo o `chatModelGeracaoEstruturada`.
+- Suíte completa (execução real, **sem nenhuma `ANTHROPIC_API_KEY` no
+  ambiente**, replicando o CI): **233/233 passando, 0 skipped, 0
+  falhas, 0 erros** (era 214 — aumentou 19, consistente). Nenhum teste
+  existente alterado.

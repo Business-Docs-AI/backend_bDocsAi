@@ -34,4 +34,18 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    // Etapa 13.4: pool dedicado pro worker de geração estruturada — nunca compartilhado com
+    // indexação/título, porque cada geração chama a Anthropic e pode levar ~130s (Etapa
+    // 11b); um pool pequeno evita gastar tokens/custo em paralelo demais por engano.
+    @Bean(name = "geracaoEstruturadaExecutor")
+    public Executor geracaoEstruturadaExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("geracao-estruturada-");
+        executor.initialize();
+        return executor;
+    }
 }
