@@ -1184,3 +1184,23 @@ mesmo commit que toca esse método por causa do R1.
 - Suíte completa (execução real): **214/214 passando, 0 skipped, 0
   falhas, 0 erros** (era 193 — aumentou 21, consistente com os 21
   testes novos). Nenhum teste existente teve asserção alterada.
+
+**Desvio encontrado e corrigido — CI vermelho na Etapa 13.2**: o push da
+13.2 passou localmente (193/193) mas o CI falhou. Causa raiz:
+`AnthropicChatModel.builder()` valida eagerly que `apiKey` não é
+branco; o CI não define `ANTHROPIC_API_KEY` nenhuma (só as chaves
+fictícias de JWT), então `app.ai.anthropic-api-key` resolve pra string
+vazia em CI — e meu bean novo (`chatModelGeracaoEstruturada`) é
+construído sempre que a flag está ligada, sem depender de o provedor
+ser de fato Anthropic. Isso quebrou o teste JÁ EXISTENTE
+`ContextLoadsComFlagDocumentacaoEstruturadaLigadaTest` (da Etapa 4) e
+teria quebrado os 2 testes novos flag-ligada desta sessão
+(`ChatModelConfigPrimarioTest`, `DocumentoEstruturadoToolsLigadoComAFlagTest`).
+Passou despercebido localmente só porque o shell desta sessão tinha uma
+`ANTHROPIC_API_KEY` real (herdada do trabalho da Etapa 10/11),
+mascarando o problema. **Correção**: os 3 testes com a flag ligada
+passam a fixar `app.ai.anthropic-api-key` com uma chave FAKE (só não-
+branca, nunca chama a API de verdade neste contexto de teste) via
+`@TestPropertySource`. Revalidado localmente com `ANTHROPIC_API_KEY`
+explicitamente removida do ambiente (replicando as condições do CI) —
+214/214 confirmado sem nenhuma chave real presente.

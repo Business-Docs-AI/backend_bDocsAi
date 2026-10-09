@@ -16,7 +16,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * leitura de app.ai.chat-provider em RagAssistantConfig está correta).
  */
 @SpringBootTest
-@TestPropertySource(properties = "bdocs.documentacao-estruturada.enabled=true")
+@TestPropertySource(properties = {
+        "bdocs.documentacao-estruturada.enabled=true",
+        // AnthropicChatModel.builder() (chatModelGeracaoEstruturada, Etapa 13.2) valida
+        // eagerly que apiKey não é branco — chave fake só pra passar da construção.
+        "app.ai.anthropic-api-key=fake-key-so-para-passar-da-validacao-de-construcao"
+})
 class DocumentoEstruturadoToolsLigadoComAFlagTest {
 
     @Autowired

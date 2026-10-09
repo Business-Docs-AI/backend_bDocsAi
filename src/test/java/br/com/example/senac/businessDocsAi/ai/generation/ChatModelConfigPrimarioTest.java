@@ -19,7 +19,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * instância DIFERENTE, nunca reaproveitada pelo chat interativo.
  */
 @SpringBootTest
-@TestPropertySource(properties = "bdocs.documentacao-estruturada.enabled=true")
+@TestPropertySource(properties = {
+        "bdocs.documentacao-estruturada.enabled=true",
+        // AnthropicChatModel.builder() valida eagerly que apiKey não é branco — chave fake
+        // só pra passar da construção, nunca usada pra chamar a API de verdade aqui.
+        "app.ai.anthropic-api-key=fake-key-so-para-passar-da-validacao-de-construcao"
+})
 class ChatModelConfigPrimarioTest {
 
     // Sem qualificador — é exatamente a mesma forma como RagAssistantConfig (chat
