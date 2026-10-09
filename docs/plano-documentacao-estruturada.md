@@ -99,7 +99,7 @@ usuário.
 | 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo + R1 nas tools legadas + confirmação estruturada (B3) | ✅ concluída |
 | 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ✅ concluída |
 | 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ✅ concluída (a regra de confirmação já tinha sido feita na 13.3, junto do resto de R1) |
-| 13.6 | Frontend: polling (reaproveitando `getPendingDraft` existente) + estado "gerando"/erro no painel | ⏳ pendente |
+| 13.6 | Frontend: polling (reaproveitando `getPendingDraft` existente) + estado "gerando"/erro no painel | ✅ concluída |
 | 14 | Metadados novos no chunk do RAG | ⏳ pendente |
 | 15 | Reindexação em massa (ADMIN, manual, assíncrona) | ⏳ pendente |
 | 16 | Filtro pré-busca no RAG | ⏳ pendente |
@@ -1291,3 +1291,28 @@ Esta etapa cobre só o que faltava: o endpoint de LEITURA.
 - Suíte completa (execução real, sem `ANTHROPIC_API_KEY`): **235/235
   passando, 0 skipped, 0 falhas, 0 erros** (era 233 — aumentou 2,
   consistente).
+
+### Etapa 13.6 — Frontend: polling no painel existente (2026-10-09)
+
+Repositório `businessDocsAi-frontend` (sem framework de teste automatizado
+configurado no projeto — validação por `tsc -b` + `eslint`, ambos limpos,
+e teste manual no browser, ver relatório final).
+
+- **`types/index.ts`**: `PropostaDocumento` ganha `status`
+  (`'PENDENTE'|'GERANDO'|'ERRO_GERACAO'`) e `erroGeracao` (aditivo);
+  `conteudoHtml` passa a `string | null` (é `null` enquanto
+  `status==='GERANDO'`).
+- **`DocumentPanel.tsx`**: o mesmo painel `documentDraft` passa a
+  renderizar 3 estados — `GERANDO` (spinner + mensagem), `ERRO_GERACAO`
+  (mensagem de erro + sugestão de regenerar/descartar), e o conteúdo
+  normal pra `PENDENTE` (inalterado).
+- **`useChat.ts`**: novo polling (R7) — enquanto o painel central é uma
+  proposta com `status==='GERANDO'`, confere
+  `chatService.getPendingDraft` (endpoint já existente, nenhum novo) a
+  cada 4s, só troca o painel quando o status mudar E ainda for a MESMA
+  proposta (`rascunhoId` igual — evita aplicar uma proposta diferente
+  por engano se o usuário trocou de ideia nesse meio tempo). Para
+  sozinho ao: status mudar, trocar de conversa/proposta, desmontar o
+  componente, ou passar de um teto de 5 minutos. Sem WebSocket/SSE.
+  Com a flag desligada no backend, `status` nunca é `'GERANDO'` —
+  nenhum polling novo chega a começar.
