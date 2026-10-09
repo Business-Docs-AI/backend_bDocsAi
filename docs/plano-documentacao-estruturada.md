@@ -95,7 +95,7 @@ usuário.
 | 11 | Investigação: orçamento de tokens | ✅ concluída (11 + 11b) — meta de <6.000 tokens/<60s **NÃO atingida**; melhor resultado ~13.9k tokens/~129s com prompt mais rigoroso (sem mudar schema). Correção de `maxTokens`/timeout fica para a Etapa 13, aguardando decisão sobre geração assíncrona (ver Log) |
 | 12 | Prompt v2 (composto sobre o v1) | ⏳ pendente — já tem o texto validado na Etapa 11b (V1: uma única chamada + anti-redundância + concisão) |
 | 13.1 | Migrações aditivas p/ geração assíncrona (`StatusRascunho` +2 valores, `conteudo_html` nullable, 4 colunas novas) | ✅ concluída — **substitui a antiga "Etapa 13" única** (ver "Proposta — geração assíncrona" abaixo) |
-| 13.2 | `ChatModel` dedicado ao worker de geração (maxTokens/timeout próprios, não toca o `chatModel` do chat interativo) | ⏳ pendente |
+| 13.2 | `ChatModel` dedicado ao worker de geração (maxTokens/timeout próprios, não toca o `chatModel` do chat interativo) | ✅ concluída |
 | 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo | ⏳ pendente |
 | 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ⏳ pendente |
 | 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ⏳ pendente |
@@ -1073,3 +1073,36 @@ Etapa 11), o comentário está desatualizado/incorreto.
 - Suíte completa (execução real): **191/191 passando, 0 skipped, 0
   falhas, 0 erros** (era 179 — aumentou 12, consistente com os 12 testes
   novos). Nenhum teste existente alterado.
+
+### Etapa 13.2 — `ChatModel` dedicado ao worker (2026-10-09)
+
+- `ChatModelConfig.chatModel` (chat interativo) agora `@Primary` (R5) —
+  nenhuma outra mudança nesse bean; todo o resto do sistema que injeta
+  `ChatModel` sem qualificador continua recebendo exatamente este bean.
+- Bean novo `chatModelGeracaoEstruturada` (`@ConditionalOnProperty`,
+  mesmo padrão de `MacroprocessoTools`) — sempre Anthropic (único
+  provedor validado para este fluxo), `maxTokens`/`timeout` lidos de
+  `bdocs.documentacao-estruturada.geracao.max-tokens`/`timeout-segundos`
+  (default 16384/240, validados na Etapa 11b). **Sem**
+  `logRequests`/`logResponses` — evita vazar o conteúdo do documento nos
+  logs (R3: o worker vai logar só tokens/latência, na Etapa 13.4).
+- `application.yaml`: bloco `bdocs.documentacao-estruturada.geracao.*`
+  novo (max-tokens, timeout-segundos, max-tentativas=2, 
+  timeout-gerando-minutos=5, intervalo-job-ms=60000,
+  material-max-caracteres=60000). **Correção de default**: `provedores`
+  passa de `gemini,anthropic` para `anthropic` — alinha o código à
+  decisão já registrada no plano (Etapa 10/11b); seguro porque a flag
+  geral segue `false` por default e a feature nunca esteve live.
+- **Pendência R5 corrigida nesta etapa**: comentário sobre
+  `maxTokens(8192)`/thinking em `ChatModelConfig` reescrito (thinking
+  está desligado, não é a causa do risco de esgotamento).
+- Testes novos (2): `ChatModelConfigPrimarioTest` — com a flag ligada,
+  injeção de `ChatModel` sem qualificador resolve pro bean primário sem
+  ambiguidade (prova em tempo de contexto, não só em asserção: se
+  `@Primary` estivesse errado, o contexto nem subiria), e o bean do
+  worker é uma instância diferente. O caminho com a flag desligada já é
+  coberto pelo `BusinessDocsAiApplicationTests` existente (só 1 bean de
+  `ChatModel` continua existindo, igual antes).
+- Suíte completa (execução real): **193/193 passando, 0 skipped, 0
+  falhas, 0 erros** (era 191 — aumentou 2, consistente). Nenhum teste
+  existente alterado.

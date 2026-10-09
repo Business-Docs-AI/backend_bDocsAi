@@ -52,5 +52,25 @@ bdocs:
     # ver FeatureFlags e docs/plano-documentacao-estruturada.md.
     enabled: ${DOCUMENTACAO_ESTRUTURADA_ENABLED:false}
     # Provedores de chat em que o caminho de documento estruturado fica disponível
-    # (decisão A3: nunca fixo no código, sempre configurável).
-    provedores: ${DOCUMENTACAO_ESTRUTURADA_PROVEDORES:gemini,anthropic}
+    # (decisão A3: nunca fixo no código, sempre configurável). Default corrigido pra
+    # "anthropic" só — a Etapa 10 encontrou uma incompatibilidade de function calling do
+    # Gemini (gemini-3.8-flash + langchain4j-google-ai-gemini:1.18.0) com qualquer
+    # tool-calling via AiServices, não só com o DTO estruturado (ver plano, "Problema
+    # separado: Gemini").
+    provedores: ${DOCUMENTACAO_ESTRUTURADA_PROVEDORES:anthropic}
+    geracao:
+      # Validado na Etapa 11b: um documento estruturado completo precisa de bem mais que o
+      # maxTokens do chat interativo (8192) — estes valores valem SÓ para o ChatModel
+      # dedicado do worker (Etapa 13.2), nunca para o chatModel do chat interativo.
+      max-tokens: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MAX_TOKENS:16384}
+      timeout-segundos: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_TIMEOUT_SEGUNDOS:240}
+      # R3: limite de tentativas por rascunho antes de desistir (ERRO_GERACAO).
+      max-tentativas: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MAX_TENTATIVAS:2}
+      # R3: o job de segurança só considera um rascunho "preso" em GERANDO após esse tempo
+      # sem terminar (cobre evento perdido ou processo reiniciado no meio).
+      timeout-gerando-minutos: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_TIMEOUT_GERANDO_MINUTOS:5}
+      intervalo-job-ms: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_INTERVALO_JOB_MS:60000}
+      # R4: limite de tamanho do material-fonte (histórico da conversa + anexos/áudio já
+      # extraídos + instruções) — acima disso, ERRO_GERACAO com mensagem clara em vez de
+      # uma chamada lenta/cara sem necessidade.
+      material-max-caracteres: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MATERIAL_MAX_CARACTERES:60000}
