@@ -15,6 +15,12 @@ public record PropostaDocumentoDTO(
         Long categoriaId,
         String categoriaNome,
         String titulo,
-        String conteudoHtml
+        String conteudoHtml,
+        // Geração assíncrona (Etapa 13.5) — aditivo. "PENDENTE" é o único valor possível
+        // pra uma proposta do fluxo legado (sempre foi assim, antes deste campo existir).
+        // "GERANDO"/"ERRO_GERACAO" só aparecem pra propostas da tool estruturada (Etapa
+        // 13.3). conteudoHtml vem null enquanto status=GERANDO.
+        String status,
+        String erroGeracao
 ) {
 }

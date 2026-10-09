@@ -98,7 +98,7 @@ usuário.
 | 13.2 | `ChatModel` dedicado ao worker de geração (maxTokens/timeout próprios, não toca o `chatModel` do chat interativo) | ✅ concluída |
 | 13.3 | Tool leve de solicitação (`solicitarGeracaoDocumentoEstruturado`/`...Atualizacao...`) + evento de disparo + R1 nas tools legadas + confirmação estruturada (B3) | ✅ concluída |
 | 13.4 | Worker de geração (listener + job de rede de segurança, reaproveitando validator/renderer existentes) | ✅ concluída |
-| 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ⏳ pendente |
+| 13.5 | Endpoint de leitura ampliado (`status`/`erroGeracao` aditivos) + confirmação só em `PENDENTE` | ✅ concluída (a regra de confirmação já tinha sido feita na 13.3, junto do resto de R1) |
 | 13.6 | Frontend: polling (reaproveitando `getPendingDraft` existente) + estado "gerando"/erro no painel | ⏳ pendente |
 | 14 | Metadados novos no chunk do RAG | ⏳ pendente |
 | 15 | Reindexação em massa (ADMIN, manual, assíncrona) | ⏳ pendente |
@@ -1259,3 +1259,35 @@ explicitamente removida do ambiente (replicando as condições do CI) —
   ambiente**, replicando o CI): **233/233 passando, 0 skipped, 0
   falhas, 0 erros** (era 214 — aumentou 19, consistente). Nenhum teste
   existente alterado.
+
+### Etapa 13.5 — Endpoint de leitura ampliado (2026-10-09)
+
+A regra "confirmação só em PENDENTE" já tinha sido implementada na
+Etapa 13.3 (junto do resto de R1, já que `confirmarRascunhoPendente` é
+o único caminho de confirmação — não existe endpoint REST separado).
+Esta etapa cobre só o que faltava: o endpoint de LEITURA.
+
+- **`PropostaDocumentoDTO`** ganha `status`/`erroGeracao` (aditivo —
+  único call site de construção, sem necessidade de construtor de
+  compatibilidade). `"PENDENTE"` continua sendo o único valor possível
+  pro fluxo legado, exatamente como sempre foi.
+- **`ChatService.buscarPropostaDocumentoPendente`** passa a procurar
+  `StatusRascunho.ativos()` (PENDENTE/GERANDO/ERRO_GERACAO) em vez de
+  só PENDENTE — tanto o `GET /chat/conversas/{id}/rascunho-pendente`
+  quanto a resposta de `enviarMensagem` passam a mostrar o estado
+  "gerando..."/erro, não só a proposta pronta (R1).
+- **Teste existente tocado (mecânico)**: `ChatServiceTest.java` — 2
+  stubs do método antigo (`findFirstByConversaIdAndStatusOrderByCriadoEmDesc`,
+  só PENDENTE) atualizados pro método novo
+  (`findFirstByConversaIdAndStatusInOrderByCriadoEmDesc`, `ativos()`)
+  que o código agora chama de fato — sem isso, os 2 testes existentes
+  que afirmam `propostaDocumento()` não-nulo/nulo quebrariam
+  silenciosamente (mock sem stub correspondente devolve
+  `Optional.empty()` por padrão). Nenhuma asserção removida/alterada,
+  só os stubs renomeados pra bater com a chamada real.
+- **Testes novos (2)**: proposta com `status=GERANDO` e
+  `conteudoHtml=null` enquanto a geração está em andamento; proposta
+  com `status=ERRO_GERACAO` e a mensagem de erro visível.
+- Suíte completa (execução real, sem `ANTHROPIC_API_KEY`): **235/235
+  passando, 0 skipped, 0 falhas, 0 erros** (era 233 — aumentou 2,
+  consistente).

@@ -238,8 +238,8 @@ class ChatServiceTest {
         rascunho.setConteudoHtml("<p>conteúdo</p>");
         rascunho.setStatus(br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.PENDENTE);
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(
-                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity categoria =
@@ -255,7 +255,78 @@ class ChatServiceTest {
         assertThat(resposta.propostaDocumento().titulo()).isEqualTo("Política X");
         assertThat(resposta.propostaDocumento().conteudoHtml()).isEqualTo("<p>conteúdo</p>");
         assertThat(resposta.propostaDocumento().categoriaNome()).isEqualTo("ERP / Fiscal");
+        assertThat(resposta.propostaDocumento().status()).isEqualTo("PENDENTE");
         assertThat(resposta.documentoConfirmado()).isNull();
+    }
+
+    // Etapa 13.5 (R1): geração assíncrona em andamento aparece na proposta com
+    // status=GERANDO e conteudoHtml null — o frontend usa isso pra mostrar "gerando...".
+    @Test
+    void enviarMensagemDevolvePropostaComStatusGerandoEnquantoAGeracaoEstaEmAndamento() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(true);
+        when(ragAssistantComFerramentas.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("Gerando o documento...").build());
+
+        br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity rascunho =
+                new br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity();
+        rascunho.setId(UUID.randomUUID());
+        rascunho.setTipo(br.com.example.senac.businessDocsAi.document.entity.TipoRascunho.CRIAR);
+        rascunho.setTitulo("Processo de Reembolso");
+        rascunho.setConteudoHtml(null);
+        rascunho.setStatus(br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.GERANDO);
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.ativos()))
+                .thenReturn(Optional.of(rascunho));
+
+        MensagemResponseDTO resposta = chatService.enviarMensagem(conversaId, new MensagemRequestDTO("Cria documento estruturado"));
+
+        assertThat(resposta.propostaDocumento()).isNotNull();
+        assertThat(resposta.propostaDocumento().status()).isEqualTo("GERANDO");
+        assertThat(resposta.propostaDocumento().conteudoHtml()).isNull();
+        assertThat(resposta.propostaDocumento().erroGeracao()).isNull();
+    }
+
+    // Etapa 13.5 (R1): geração que falhou aparece com status=ERRO_GERACAO e a mensagem de
+    // erro, pro frontend exibir no painel (Etapa 13.6).
+    @Test
+    void enviarMensagemDevolvePropostaComErroGeracaoQuandoAGeracaoFalhou() {
+        UUID conversaId = UUID.randomUUID();
+        ConversaEntity conversa = new ConversaEntity();
+        conversa.setId(conversaId);
+        conversa.setUsuarioId(USUARIO_A);
+
+        when(currentUserProvider.getCurrentUserId()).thenReturn(USUARIO_A);
+        when(conversaRepository.findByIdAndUsuarioId(conversaId, USUARIO_A)).thenReturn(Optional.of(conversa));
+        when(currentUserProvider.isEditorOuAdmin()).thenReturn(true);
+        when(ragAssistantComFerramentas.responder(any(), any()))
+                .thenReturn(Result.<String>builder().content("texto qualquer").build());
+
+        br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity rascunho =
+                new br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity();
+        rascunho.setId(UUID.randomUUID());
+        rascunho.setTipo(br.com.example.senac.businessDocsAi.document.entity.TipoRascunho.CRIAR);
+        rascunho.setTitulo("Processo de Reembolso");
+        rascunho.setConteudoHtml(null);
+        rascunho.setStatus(br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.ERRO_GERACAO);
+        rascunho.setErroGeracao("Não foi possível gerar um documento estruturado válido.");
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.ativos()))
+                .thenReturn(Optional.of(rascunho));
+
+        MensagemResponseDTO resposta = chatService.enviarMensagem(conversaId, new MensagemRequestDTO("oi"));
+
+        assertThat(resposta.propostaDocumento().status()).isEqualTo("ERRO_GERACAO");
+        assertThat(resposta.propostaDocumento().erroGeracao())
+                .isEqualTo("Não foi possível gerar um documento estruturado válido.");
     }
 
     @Test
@@ -271,8 +342,8 @@ class ChatServiceTest {
         when(ragAssistantComFerramentas.responder(any(), any()))
                 .thenReturn(Result.<String>builder().content("Confirmado.").build());
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(
-                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(
+                conversaId, br.com.example.senac.businessDocsAi.document.entity.StatusRascunho.ativos()))
                 .thenReturn(Optional.empty());
 
         UUID documentoId = UUID.randomUUID();
