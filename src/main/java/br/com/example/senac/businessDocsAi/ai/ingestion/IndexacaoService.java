@@ -2,6 +2,7 @@ package br.com.example.senac.businessDocsAi.ai.ingestion;
 
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
+import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentSplitter;
@@ -102,8 +103,17 @@ public class IndexacaoService {
 
         List<TextSegment> segmentos = new ArrayList<>();
 
+        // Etapa 14 (A1): tipo complementa o prefixo título+seção que já existia — ajuda o
+        // retriever a distinguir um PROCESSO de uma POLITICA pelo texto, mesmo sem filtro.
+        // NAO_CLASSIFICADO (documento legado/sem metadado real) não teria valor nenhum
+        // nesse prefixo — tratado como "sem tipo", igual a null, em vez de poluir o texto
+        // (e o metadado, abaixo) com um rótulo que não distingue nada.
+        boolean temTipoReal = documento.getTipoDocumento() != null
+                && documento.getTipoDocumento() != TipoDocumento.NAO_CLASSIFICADO;
+        String tipoLegivel = temTipoReal ? documento.getTipoDocumento().name() + " " : "";
+
         for (HtmlSectionSplitter.Secao secao : secoes) {
-            String textoComContexto = documento.getTitulo() + " > " + secao.titulo() + "\n" + secao.texto();
+            String textoComContexto = tipoLegivel + documento.getTitulo() + " > " + secao.titulo() + "\n" + secao.texto();
 
             Document documentoLangchain = Document.from(textoComContexto);
 
@@ -113,6 +123,25 @@ public class IndexacaoService {
                         .put("versao", documento.getVersaoAtual())
                         .put("titulo", documento.getTitulo())
                         .put("secao", secao.ancora());
+
+                // Etapa 14: metadados pré-filtro do RAG (Etapa 16) — categoria_id é sempre
+                // conhecido (documento sempre tem categoria); os demais são nullable em
+                // DocumentoEntity (documento legado/NAO_CLASSIFICADO) e só são gravados
+                // quando presentes — chunk sem o metadado é tratado como VIGENTE/sem
+                // restrição na leitura (Etapa 16), nunca some do RAG por causa disso.
+                metadata.put("categoria_id", documento.getCategoriaId());
+                if (temTipoReal) {
+                    metadata.put("tipo_documento", documento.getTipoDocumento().name());
+                }
+                if (documento.getStatusCicloVida() != null) {
+                    metadata.put("status_ciclo_vida", documento.getStatusCicloVida().name());
+                }
+                if (documento.getMacroprocessoId() != null) {
+                    metadata.put("macroprocesso_id", documento.getMacroprocessoId());
+                }
+                if (documento.getConfidencialidade() != null) {
+                    metadata.put("confidencialidade", documento.getConfidencialidade().name());
+                }
 
                 segmentos.add(TextSegment.from(segmento.text(), metadata));
             }

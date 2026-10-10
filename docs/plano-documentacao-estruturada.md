@@ -1528,3 +1528,32 @@ em 2 — reaproveita PENDENTE / descarta+cria novo em ERRO_GERACAO;
 `DocumentoToolsTest`: GERANDO em `prepararAtualizacaoDocumento`, +
 ERRO_GERACAO sobrescreve sem ler o antigo em `prepararCriacaoDocumento`
 e `prepararAtualizacaoDocumento`).
+
+### Etapa 14 — Metadados novos no chunk do RAG (2026-10-10)
+
+- **Migration `V14__add_metadados_rag_documento_embedding.sql`**:
+  `ALTER TABLE IF EXISTS documento_embedding ADD COLUMN IF NOT EXISTS`
+  para `categoria_id`/`tipo_documento`/`status_ciclo_vida`/
+  `macroprocesso_id`/`confidencialidade` (todas nullable) — cobre o
+  banco EXISTENTE (B1).
+- **`EmbeddingConfig`**: `columnDefinitions` do `PgVectorEmbeddingStore`
+  ganhou as mesmas 5 colunas — cobre um banco NOVO (`createTable(true)`
+  já cria com elas desde o início; a migration vira no-op nesse caso).
+- **`IndexacaoService.gerarSegmentos`**: grava os 5 metadados no chunk.
+  `categoria_id` sempre (NOT NULL em `documento`, V1); os outros 4 só
+  quando presentes — `NAO_CLASSIFICADO` tratado como "sem tipo" (omitido
+  do metadado E do prefixo do texto, não só um valor nulo). (A1) tipo
+  complementa o prefixo título+seção que já existia.
+- **B1 — os dois cenários testados**: banco EXISTENTE (test DB local,
+  já tinha a tabela com o schema antigo de execuções anteriores) — rodar
+  a suíte local aplicou a migration V14 de verdade via Flyway, 5 colunas
+  novas confirmadas via `\d documento_embedding` sem perder nenhuma
+  coluna/dado existente. Banco NOVO (`createTable`) — coberto
+  naturalmente pelo CI, que sobe um Postgres efêmero do zero a cada
+  execução (nunca viu a tabela antes).
+- Testes novos: 2 (`IndexacaoServiceTest` — grava os 5 metadados quando
+  presentes; omite os 4 opcionais, e o tipo do prefixo do texto, quando
+  o documento é `NAO_CLASSIFICADO`/sem metadado). Fixture `documentoComVersao`
+  corrigido para sempre setar `categoriaId` (é NOT NULL no banco de
+  verdade — o fixture antigo não precisava disso antes da Etapa 14).
+- Suíte completa: 252/252 passando, 0 falhas, 0 erros (era 250).
