@@ -28,6 +28,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
@@ -291,6 +292,57 @@ class DocumentoServiceTest {
 
         assertThat(resposta).hasSize(1);
         assertThat(resposta.get(0).processoPaiId()).isNull();
+    }
+
+    // --- Etapa 18 (decisão 9): filtro de listagem por revisão vencida ---
+
+    @Test
+    void listarComRevisaoVencidaSoDevolveDocumentosComProximaRevisaoNoPassado() {
+        DocumentoEntity vencido = documentoExistente(UUID.randomUUID(), 1, "hash-vencido");
+        vencido.setProximaRevisao(LocalDate.now().minusDays(1));
+
+        DocumentoEntity emDia = documentoExistente(UUID.randomUUID(), 1, "hash-em-dia");
+        emDia.setProximaRevisao(LocalDate.now().plusDays(1));
+
+        DocumentoEntity semPeriodicidade = documentoExistente(UUID.randomUUID(), 1, "hash-sem-periodicidade");
+        semPeriodicidade.setProximaRevisao(null);
+
+        when(documentoRepository.findByDeletadoFalseOrderByTituloAsc())
+                .thenReturn(List.of(vencido, emDia, semPeriodicidade));
+        when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+
+        List<DocumentoResponseDTO> resposta = documentoService.listar(null, true);
+
+        assertThat(resposta).hasSize(1);
+        assertThat(resposta.get(0).id()).isEqualTo(vencido.getId());
+    }
+
+    // A6: documento OBSOLETO nunca conta como "revisão vencida".
+    @Test
+    void listarComRevisaoVencidaNuncaDevolveDocumentoObsoleto() {
+        DocumentoEntity obsoletoVencido = documentoExistente(UUID.randomUUID(), 1, "hash-obsoleto");
+        obsoletoVencido.setProximaRevisao(LocalDate.now().minusDays(1));
+        obsoletoVencido.setStatusCicloVida(StatusCicloVida.OBSOLETO);
+
+        when(documentoRepository.findByDeletadoFalseOrderByTituloAsc()).thenReturn(List.of(obsoletoVencido));
+        when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+
+        List<DocumentoResponseDTO> resposta = documentoService.listar(null, true);
+
+        assertThat(resposta).isEmpty();
+    }
+
+    @Test
+    void listarSemOFiltroDevolveTodosIndependenteDaRevisao() {
+        DocumentoEntity vencido = documentoExistente(UUID.randomUUID(), 1, "hash-vencido");
+        vencido.setProximaRevisao(LocalDate.now().minusDays(1));
+
+        when(documentoRepository.findByDeletadoFalseOrderByTituloAsc()).thenReturn(List.of(vencido));
+        when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+
+        List<DocumentoResponseDTO> resposta = documentoService.listar(null);
+
+        assertThat(resposta).hasSize(1);
     }
 
     @Test

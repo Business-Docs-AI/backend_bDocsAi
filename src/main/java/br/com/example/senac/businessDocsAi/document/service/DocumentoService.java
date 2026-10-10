@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -229,6 +230,32 @@ public class DocumentoService {
         documento.setPeriodicidadeRevisaoMeses(metadados.periodicidadeRevisaoMeses());
         documento.setConfidencialidade(metadados.confidencialidade());
         documento.setTags(metadados.tags());
+
+        // Etapa 18 (decisão 9): recalcula sempre que os metadados são aplicados (criação,
+        // atualização, ou a própria periodicidade mudando) — nunca incrementalmente, pra
+        // uma periodicidade alterada (ex.: de anual pra semestral) já refletir na próxima
+        // vez que o documento for salvo, sem exigir um gatilho separado.
+        documento.setProximaRevisao(calcularProximaRevisao(documento));
+    }
+
+    // Etapa 18 (A6): documento OBSOLETO nunca conta como "revisão vencida" — não teria
+    // sentido cobrar revisão de um processo que já não está mais em vigor.
+    private boolean isRevisaoVencida(DocumentoEntity documento) {
+        return documento.getStatusCicloVida() != StatusCicloVida.OBSOLETO
+                && documento.getProximaRevisao() != null
+                && documento.getProximaRevisao().isBefore(LocalDate.now());
+    }
+
+    // dataVigencia nunca é setada pelo DTO estruturado hoje (fica sempre null) — na prática,
+    // a base é sempre "hoje" (quando os metadados foram definidos/atualizados). Se
+    // dataVigencia vier a ser preenchida no futuro, passa a valer como base em vez de hoje.
+    private LocalDate calcularProximaRevisao(DocumentoEntity documento) {
+        if (documento.getPeriodicidadeRevisaoMeses() == null) {
+            return null;
+        }
+
+        LocalDate base = documento.getDataVigencia() != null ? documento.getDataVigencia() : LocalDate.now();
+        return base.plusMonths(documento.getPeriodicidadeRevisaoMeses());
     }
 
     // Substitui por completo o conjunto de áreas participantes pelo que a proposta trouxe —
@@ -247,6 +274,14 @@ public class DocumentoService {
 
     @PreAuthorize("isAuthenticated()")
     public List<DocumentoResponseDTO> listar(Long categoriaId) {
+        return listar(categoriaId, false);
+    }
+
+    // Etapa 18 (decisão 9, filtro de listagem): revisaoVencida=true devolve só documentos
+    // com proximaRevisao no passado — a INDICAÇÃO visual disso é Etapa 19 (frontend), esta
+    // etapa só precisa entregar o filtro em si, no backend.
+    @PreAuthorize("isAuthenticated()")
+    public List<DocumentoResponseDTO> listar(Long categoriaId, boolean somenteRevisaoVencida) {
 
         if (categoriaId != null) {
             categoriaAccessService.validarAcessoCategoria(categoriaId);
@@ -258,6 +293,7 @@ public class DocumentoService {
 
         List<DocumentoEntity> acessiveis = documentos.stream()
                 .filter(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
+                .filter(documento -> !somenteRevisaoVencida || isRevisaoVencida(documento))
                 .toList();
 
         Map<Long, String> nomesCategorias = carregarNomesCategorias(acessiveis);

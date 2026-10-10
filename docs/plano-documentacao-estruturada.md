@@ -1670,3 +1670,35 @@ conta da Etapa 7+ — não precisaram de nenhuma mudança.
   (substituiu o antigo `verify(eventPublisher, never())...` que
   documentava o gap).
 - Suíte completa: 277/277 passando, 0 falhas, 0 erros (era 276).
+
+### Etapa 18 — Governança, backend (2026-10-10)
+
+Decisão 9 ("sem e-mail; só cálculo de proxima_revisao, indicador visual
+de 'revisão vencida' na UI e filtro de listagem; pendencias[] visíveis")
+— esta etapa entrega a parte BACKEND: cálculo + filtro. O indicador
+VISUAL é Etapa 19 (frontend, não começada). `pendencias[]` já é
+persistido no `conteudo_estruturado` desde a Etapa 7/8 e já volta no
+GET do documento — nada novo necessário aí.
+
+- **Cálculo de `proximaRevisao`** (interpretação registrada aqui por
+  não haver um gatilho/base de data explícita no plano original):
+  recalculado em `aplicarMetadadosEstruturados` — toda vez que os
+  metadados estruturados são aplicados (criação ou atualização via o
+  caminho estruturado) — como `(dataVigencia ou hoje) +
+  periodicidadeRevisaoMeses`. `dataVigencia` nunca é preenchida pelo
+  DTO estruturado hoje (fica sempre `null`), então na prática a base é
+  sempre "hoje" — se `dataVigencia` vier a ser preenchida numa etapa
+  futura, passa a valer como base automaticamente. Sem
+  `periodicidadeRevisaoMeses`, `proximaRevisao` fica `null` (nada a
+  calcular).
+- **Filtro de listagem**: `GET /documentos?revisaoVencida=true` (novo
+  parâmetro, default `false` — comportamento de sempre quando ausente)
+  — só documentos com `proximaRevisao` no passado. **A6**: documento
+  `OBSOLETO` nunca conta como revisão vencida, mesmo com `proximaRevisao`
+  vencida.
+- Testes novos: 3, todos em `DocumentoServiceTest` (só vencidos aparecem
+  com o filtro, OBSOLETO nunca aparece mesmo vencido, sem o filtro
+  devolve todos independente da revisão). `DocumentoServiceComEstruturaTest`
+  ganhou uma asserção nova (`proximaRevisao` calculada) no teste já
+  existente, não um teste novo.
+- Suíte completa: 280/280 passando, 0 falhas, 0 erros (era 277).

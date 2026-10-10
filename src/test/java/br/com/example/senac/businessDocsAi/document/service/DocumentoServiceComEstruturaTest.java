@@ -97,6 +97,9 @@ class DocumentoServiceComEstruturaTest {
         assertThat(salvo.getDonoProcesso()).isEqualTo("Analista Financeiro");
         assertThat(salvo.getAprovador()).isEqualTo("Gestor");
         assertThat(salvo.getPeriodicidadeRevisaoMeses()).isEqualTo(12);
+        // Etapa 18 (decisão 9): proximaRevisao calculada automaticamente — sem dataVigencia
+        // setada (nunca é, pelo DTO estruturado), a base é hoje.
+        assertThat(salvo.getProximaRevisao()).isEqualTo(java.time.LocalDate.now().plusMonths(12));
         assertThat(salvo.getConfidencialidade()).isEqualTo(Confidencialidade.INTERNO);
         assertThat(salvo.getTags()).containsExactly("reembolso");
         assertThat(salvo.getStatusCicloVida()).isEqualTo(StatusCicloVida.VIGENTE);
