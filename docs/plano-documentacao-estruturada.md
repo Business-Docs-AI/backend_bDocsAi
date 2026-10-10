@@ -41,6 +41,49 @@ créditos: modo `modelo-fake` do worker de geração assíncrona (ver Etapa
 Anthropic. Ver "Total de chamadas reais à API desde o início da Etapa 13"
 no fechamento da Etapa 13.6 para o registro de uso até aqui.
 
+## Migração do frontend para Tailwind CSS (decisão 2026-10-10)
+
+O frontend inteiro (`businessDocsAi-frontend`) vai migrar de MUI/CSS puro
+para Tailwind CSS. Decisão registrada aqui porque afeta o cronograma:
+**a migração acontece numa branch e PR próprios, separados da
+documentação estruturada, e ANTES das Etapas 19 e 20** (que passarão a
+ser escritas já em Tailwind).
+
+Levantamento (2026-10-10, read-only, sem nenhuma alteração no repo do
+frontend): 1 arquivo CSS puro (`global.css`, 17 linhas, irrelevante);
+15 arquivos/130 ocorrências de `sx=` do MUI; zero `styled()`/`makeStyles`;
+zero `style={{}}` inline; tema central em `theme/theme.ts` (paleta,
+tipografia, overrides de Button/AppBar/Paper) mapeável pra
+`tailwind.config`; 18 de 40 arquivos (45%) importam `@mui`, sempre por
+import profundo (não barrel) — bom sinal pra migração incremental; ~30
+componentes MUI distintos em uso (Box/Typography/Stack/Button são os
+mais comuns, família Dialog completa, AppBar/Tabs/Drawer/Menu,
+Alert/Snackbar/CircularProgress/Tooltip, CssBaseline, ~25 ícones).
+Stack atual (React 18.3.1/Vite 5.4.10/MUI 6.1.6/TS 5.6.3) compatível
+com Tailwind v4 (`@tailwindcss/vite`, recomendado) ou v3.
+
+Riscos de convivência Tailwind+MUI durante a transição: preflight do
+Tailwind vs. `CssBaseline` do MUI (mitigar desligando o preflight
+enquanto o MUI ainda existir); especificidade (Emotion/MUI geralmente
+vence utility classes — mitigar com `important` escopado ou aplicando
+Tailwind primeiro em componentes sem MUI por baixo); ordem de injeção
+de CSS no Vite (Tailwind depois do Emotion).
+
+Duas opções de escopo, ainda não decididas entre si:
+- **A — Tailwind substitui CSS puro/avulso, MANTÉM os componentes MUI**:
+  esforço baixo-médio, incremental, baixo risco (não há `styled()` nem
+  CSS puro significativo pra desembaraçar).
+  - **B — Tailwind substitui tudo, REMOVE o MUI**: esforço alto —
+  reconstrução de ~30 componentes (vários com lógica de portal/
+  posicionamento, não só estilo) com uma lib de primitivos acessíveis
+  + Tailwind; sem testes automatizados no frontend, risco alto de
+  regressão funcional, não só visual.
+
+Migração incremental proposta: 1 PR por página/componente, screenshot
+antes/depois de cada tela (sem teste automatizado, validação visual é
+obrigatória), ordem sugerida por risco crescente (tema → páginas
+simples → páginas com formulário → Chat, a mais complexa).
+
 ## Flags
 
 | Flag | Default | Controla |
@@ -1444,3 +1487,44 @@ semanticamente válido) depois de um atraso curto e configurável
 GERANDO pra mostrar). Usado pra todo o teste manual de ponta a ponta
 (A, abaixo) — Parte B (1 geração real) é a única chamada que de fato
 usa a Anthropic.
+
+**Postura de produção (F3, 2026-10-10)**: `.env` LOCAL fica com
+`DOCUMENTACAO_ESTRUTURADA_ENABLED=true` e `..._MODELO_FAKE=true`
+enquanto o desenvolvimento das Etapas 14+ continua (nenhuma chamada real
+à Anthropic nesse ambiente a partir de agora, a menos que explicitamente
+reautorizado). **Em produção, `DOCUMENTACAO_ESTRUTURADA_ENABLED` fica
+DESLIGADA até o lançamento da feature** — e `modelo-fake` nunca deve ser
+ligado em produção em hipótese nenhuma (o código já trata isso como
+default `false`, mas a variável de ambiente de produção nunca deve nem
+declarar `true`).
+
+#### F2 — re-pedir depois de ERRO_GERACAO (2026-10-10)
+
+Comportamento ANTERIOR (Etapa 13.3): `DocumentoEstruturadoTools.solicitar()`
+reaproveitava em memória um rascunho em ERRO_GERACAO (mesma regra de
+PENDENTE) — resetava status/tentativas/erro na MESMA linha, nunca
+passando por DESCARTADO. Funcionava (nunca exigia descarte manual), mas
+apagava o histórico do erro anterior e herdava `reservadoEm` de uma
+geração completamente diferente.
+
+**Corrigido**: ERRO_GERACAO nunca mais é reaproveitado em memória — é
+descartado via `repository.descartar()` (UPDATE condicional, mesmo
+método do bug 3 da Etapa 13.6) e uma linha NOVA é criada do zero
+(tentativas=0, turnoCriacao = turno ATUAL, não o antigo). PENDENTE
+continua reaproveitado em memória, inalterado (regra legada).
+
+**Tools legadas (`DocumentoTools`) confirmadas seguras** diante de um
+rascunho em GERANDO/ERRO_GERACAO, com teste para cada uma: `preparar*`
+recebem o HTML completo como parâmetro e SOBRESCREVEM a linha — nunca
+leem/mesclam o `conteudo_html` antigo (que pode estar nulo, já que o
+worker assíncrono pode falhar antes de escrever nada); `confirmarRascunhoPendente`
+recusa explicitamente para os dois estados antes de ler qualquer
+conteúdo; `descartarRascunhoPendente` não toca em nenhuma coluna de
+conteúdo. Único gap de cobertura encontrado: faltava teste de
+`prepararAtualizacaoDocumento` recusando com GERANDO — adicionado.
+
+Testes novos: 5 (`DocumentoEstruturadoToolsTest`: split do teste antigo
+em 2 — reaproveita PENDENTE / descarta+cria novo em ERRO_GERACAO;
+`DocumentoToolsTest`: GERANDO em `prepararAtualizacaoDocumento`, +
+ERRO_GERACAO sobrescreve sem ler o antigo em `prepararCriacaoDocumento`
+e `prepararAtualizacaoDocumento`).

@@ -112,31 +112,63 @@ class DocumentoEstruturadoToolsTest {
         verifyNoInteractions(eventPublisher);
     }
 
-    // R1: reaproveita o rascunho existente (PENDENTE ou ERRO_GERACAO) em vez de criar um
-    // segundo — mesma regra de "proposta ativa única" das tools legadas.
+    // R1 (PENDENTE): reaproveita o rascunho existente em vez de criar um segundo — mesma
+    // regra de "proposta ativa única" das tools legadas.
     @Test
-    void solicitarGeracaoComRascunhoEmErroReaproveitaALinhaEPreservaOTurnoCriacao() {
+    void solicitarGeracaoComRascunhoPendenteReaproveitaALinhaEPreservaOTurnoCriacao() {
+        UUID turnoAnterior = UUID.randomUUID();
+        RascunhoDocumentoEntity pendente = new RascunhoDocumentoEntity();
+        pendente.setId(UUID.randomUUID());
+        pendente.setStatus(StatusRascunho.PENDENTE);
+        pendente.setTurnoCriacao(turnoAnterior);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(pendente));
+
+        tools.solicitarGeracaoDocumentoEstruturado("Processo Novo", CATEGORIA_ID, "foco nisso");
+
+        ArgumentCaptor<RascunhoDocumentoEntity> captor = ArgumentCaptor.forClass(RascunhoDocumentoEntity.class);
+        verify(rascunhoRepository).save(captor.capture());
+        verify(rascunhoRepository, never()).descartar(any(), any());
+
+        RascunhoDocumentoEntity salvo = captor.getValue();
+        assertThat(salvo.getId()).isEqualTo(pendente.getId());
+        assertThat(salvo.getStatus()).isEqualTo(StatusRascunho.GERANDO);
+        assertThat(salvo.getTurnoCriacao()).isEqualTo(turnoAnterior);
+        assertThat(salvo.getInstrucoesAdicionais()).isEqualTo("foco nisso");
+    }
+
+    // F2 (2026-10-10): um rascunho em ERRO_GERACAO NUNCA é reaproveitado em memória — é
+    // descartado (UPDATE condicional) e um rascunho NOVO é criado do zero, com tentativas
+    // zeradas e turnoCriacao do turno ATUAL (não herda o turno da tentativa antiga, que não
+    // tem relação com quando esta nova linha foi de fato criada). Preserva, como uma linha
+    // DESCARTADO própria, o histórico de cada tentativa que falhou.
+    @Test
+    void solicitarGeracaoComRascunhoEmErroDescartaAntigoECriaNovo() {
+        UUID idAntigo = UUID.randomUUID();
         UUID turnoAnterior = UUID.randomUUID();
         RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
-        emErro.setId(UUID.randomUUID());
+        emErro.setId(idAntigo);
         emErro.setStatus(StatusRascunho.ERRO_GERACAO);
         emErro.setErroGeracao("Falha anterior");
         emErro.setTentativasGeracao(2);
         emErro.setTurnoCriacao(turnoAnterior);
         when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(emErro));
+        when(rascunhoRepository.descartar(idAntigo, StatusRascunho.ativos())).thenReturn(1);
 
         tools.solicitarGeracaoDocumentoEstruturado("Processo Retentativa", CATEGORIA_ID, "foco nisso");
+
+        verify(rascunhoRepository).descartar(idAntigo, StatusRascunho.ativos());
 
         ArgumentCaptor<RascunhoDocumentoEntity> captor = ArgumentCaptor.forClass(RascunhoDocumentoEntity.class);
         verify(rascunhoRepository).save(captor.capture());
 
         RascunhoDocumentoEntity salvo = captor.getValue();
-        assertThat(salvo.getId()).isEqualTo(emErro.getId());
+        assertThat(salvo.getId()).isNull(); // entidade NOVA, ainda não persistida
         assertThat(salvo.getStatus()).isEqualTo(StatusRascunho.GERANDO);
         assertThat(salvo.getErroGeracao()).isNull();
         assertThat(salvo.getTentativasGeracao()).isZero();
-        assertThat(salvo.getTurnoCriacao()).isEqualTo(turnoAnterior);
+        assertThat(salvo.getTurnoCriacao()).isEqualTo(turnoAtual); // turno ATUAL, não o antigo
         assertThat(salvo.getInstrucoesAdicionais()).isEqualTo("foco nisso");
     }
 

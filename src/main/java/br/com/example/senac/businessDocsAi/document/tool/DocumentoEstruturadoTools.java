@@ -111,7 +111,23 @@ public class DocumentoEstruturadoTools {
                     + "peça para descartar a proposta atual antes de pedir uma nova.";
         }
 
-        RascunhoDocumentoEntity rascunho = existenteOpt.orElseGet(RascunhoDocumentoEntity::new);
+        // F2: um rascunho em ERRO_GERACAO NUNCA é reaproveitado em memória — é descartado
+        // (UPDATE condicional, mesmo método/motivo do bug 3 da Etapa 13.6: nunca um save()
+        // de entidade inteira) e um rascunho NOVO é criado do zero pra nova tentativa. Isso
+        // preserva, como uma linha DESCARTADO própria, o histórico de cada tentativa que
+        // falhou, em vez de apagar o erro anterior reescrevendo a mesma linha — e evita
+        // herdar tentativasGeracao/reservadoEm de uma linha de uma geração anterior
+        // completamente diferente. PENDENTE continua reaproveitado em memória (regra legada
+        // de "proposta ativa única por conversa", inalterada).
+        boolean haviaErroAnterior = existenteOpt.isPresent()
+                && existenteOpt.get().getStatus() == StatusRascunho.ERRO_GERACAO;
+        if (haviaErroAnterior) {
+            rascunhoRepository.descartar(existenteOpt.get().getId(), StatusRascunho.ativos());
+        }
+
+        RascunhoDocumentoEntity rascunho = (existenteOpt.isPresent() && !haviaErroAnterior)
+                ? existenteOpt.get()
+                : new RascunhoDocumentoEntity();
         boolean novo = rascunho.getId() == null;
 
         rascunho.setConversaId(contexto.conversaId());

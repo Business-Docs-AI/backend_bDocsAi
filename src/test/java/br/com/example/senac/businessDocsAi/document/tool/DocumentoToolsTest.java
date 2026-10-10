@@ -239,6 +239,88 @@ class DocumentoToolsTest {
         verify(rascunhoRepository, never()).save(any());
     }
 
+    // F2 (2026-10-10): confirma que prepararAtualizacaoDocumento também recusa com um
+    // rascunho GERANDO na conversa (só prepararCriacaoDocumento tinha teste disso até aqui).
+    @Test
+    void prepararAtualizacaoDocumentoComOutroRascunhoGerandoNaConversaRecusa() {
+        UUID documentoIdAlvo = UUID.randomUUID();
+        DocumentoResponseDTO documentoAtual = new DocumentoResponseDTO(
+                documentoIdAlvo, "Título Atual", "<p>x</p>", 1, StatusIndexacao.PENDENTE, "Autor",
+                LocalDateTime.now(), null, null, CATEGORIA_ID, null
+        );
+        when(documentoService.buscarPorId(documentoIdAlvo)).thenReturn(documentoAtual);
+
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.prepararAtualizacaoDocumento(documentoIdAlvo.toString(), "Outro", "<p>x</p>");
+
+        assertThat(resposta).containsIgnoringCase("já existe um documento sendo gerado");
+        verify(rascunhoRepository, never()).save(any());
+    }
+
+    // F2 (2026-10-10): as tools LEGADAS (preparar*) sempre recebem o HTML completo como
+    // parâmetro (nunca leem conteudoHtml do rascunho antigo) — encontrar um rascunho em
+    // ERRO_GERACAO é seguro: sobrescreve a linha com o conteúdo novo, nunca mescla nem lê o
+    // conteudoHtml antigo (que podia estar nulo, já que o worker assíncrono nunca chegou a
+    // escrever nada antes de falhar).
+    @Test
+    void prepararCriacaoDocumentoComRascunhoEmErroSobrescreveSemLerConteudoAntigo() {
+        RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
+        emErro.setId(UUID.randomUUID());
+        emErro.setStatus(StatusRascunho.ERRO_GERACAO);
+        emErro.setErroGeracao("Falha anterior do worker assíncrono");
+        emErro.setConteudoHtml(null); // worker nunca chegou a escrever nada
+        emErro.setTentativasGeracao(2);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(emErro));
+        when(rascunhoRepository.save(any(RascunhoDocumentoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        documentoTools.prepararCriacaoDocumento("Novo Título", "<p>conteúdo novo completo</p>", CATEGORIA_ID);
+
+        ArgumentCaptor<RascunhoDocumentoEntity> captor = ArgumentCaptor.forClass(RascunhoDocumentoEntity.class);
+        verify(rascunhoRepository).save(captor.capture());
+
+        RascunhoDocumentoEntity salvo = captor.getValue();
+        assertThat(salvo.getStatus()).isEqualTo(StatusRascunho.PENDENTE);
+        assertThat(salvo.getConteudoHtml()).isEqualTo("<p>conteúdo novo completo</p>");
+        assertThat(salvo.getErroGeracao()).isNull();
+        assertThat(salvo.getTentativasGeracao()).isZero();
+    }
+
+    @Test
+    void prepararAtualizacaoDocumentoComRascunhoEmErroSobrescreveSemLerConteudoAntigo() {
+        UUID documentoIdAlvo = UUID.randomUUID();
+        DocumentoResponseDTO documentoAtual = new DocumentoResponseDTO(
+                documentoIdAlvo, "Título Atual", "<p>conteúdo antigo</p>", 1, StatusIndexacao.PENDENTE, "Autor",
+                LocalDateTime.now(), null, null, CATEGORIA_ID, null
+        );
+        when(documentoService.buscarPorId(documentoIdAlvo)).thenReturn(documentoAtual);
+
+        RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
+        emErro.setId(UUID.randomUUID());
+        emErro.setStatus(StatusRascunho.ERRO_GERACAO);
+        emErro.setErroGeracao("Falha anterior do worker assíncrono");
+        emErro.setConteudoHtml(null);
+        emErro.setTentativasGeracao(1);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(emErro));
+        when(rascunhoRepository.save(any(RascunhoDocumentoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        documentoTools.prepararAtualizacaoDocumento(documentoIdAlvo.toString(), "Novo Título", "<p>conteúdo novo completo</p>");
+
+        ArgumentCaptor<RascunhoDocumentoEntity> captor = ArgumentCaptor.forClass(RascunhoDocumentoEntity.class);
+        verify(rascunhoRepository).save(captor.capture());
+
+        RascunhoDocumentoEntity salvo = captor.getValue();
+        assertThat(salvo.getStatus()).isEqualTo(StatusRascunho.PENDENTE);
+        assertThat(salvo.getConteudoHtml()).isEqualTo("<p>conteúdo novo completo</p>");
+        assertThat(salvo.getErroGeracao()).isNull();
+        assertThat(salvo.getTentativasGeracao()).isZero();
+    }
+
     @Test
     void confirmarRascunhoEmGerandoERecusadoComMensagemClara() {
         RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
