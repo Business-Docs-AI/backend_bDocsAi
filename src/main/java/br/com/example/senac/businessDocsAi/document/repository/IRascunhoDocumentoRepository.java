@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -37,6 +38,16 @@ public interface IRascunhoDocumentoRepository extends JpaRepository<RascunhoDocu
     // não esgotou o limite de tentativas. affected=0 significa "outro worker já reservou" ou
     // "não está mais elegível" (ex.: usuário descartou) — o chamador deve desistir em
     // silêncio, nunca tratar como erro.
+    //
+    // @Transactional AQUI (não só no chamador): flushAutomatically=true precisa de uma
+    // transação ativa pra executar o flush. GeracaoEstruturadaListener (@Async) e
+    // GeracaoEstruturadaJob (@Scheduled) não têm nenhuma transação ambiente — sem isso,
+    // falha em produção com "No EntityManager with actual transaction available for
+    // current thread", mesmo passando nos testes (que são @Transactional na própria classe
+    // de teste, mascarando a falta de transação do caminho real). Ver
+    // GeracaoEstruturadaServiceSemTransacaoAmbienteTest, que reproduz isso sem usar
+    // @Transactional na classe de teste.
+    @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE RascunhoDocumentoEntity r
@@ -56,6 +67,8 @@ public interface IRascunhoDocumentoRepository extends JpaRepository<RascunhoDocu
     // R1: só grava o sucesso se o rascunho AINDA estiver GERANDO — se o usuário descartou no
     // meio (status virou DESCARTADO), affected=0 e o resultado deve ser descartado em
     // silêncio pelo chamador, nunca sobrescrever o DESCARTADO.
+    // @Transactional: mesmo motivo de reservarParaProcessamento.
+    @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE RascunhoDocumentoEntity r
@@ -78,6 +91,8 @@ public interface IRascunhoDocumentoRepository extends JpaRepository<RascunhoDocu
     );
 
     // R1: mesma proteção de concorrência da finalização de sucesso.
+    // @Transactional: mesmo motivo de reservarParaProcessamento.
+    @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE RascunhoDocumentoEntity r
@@ -86,4 +101,26 @@ public interface IRascunhoDocumentoRepository extends JpaRepository<RascunhoDocu
                AND r.status = 'GERANDO'
             """)
     int finalizarComErro(@Param("id") UUID id, @Param("erroGeracao") String erroGeracao);
+
+    // Etapa 13.6 (bug achado no teste manual E2E, modo modelo-fake): DocumentoTools.
+    // descartarRascunhoPendente() fazia um findFirst...() + setStatus(DESCARTADO) +
+    // save() da entidade INTEIRA — um UPDATE incondicional de TODAS as colunas com os
+    // valores que a entidade tinha NO MOMENTO DA LEITURA. Se o worker terminasse
+    // (finalizarComSucesso/finalizarComErro) ENTRE essa leitura e esse save, o save()
+    // do descarte reescrevia a linha inteira com os valores ANTIGOS — apagando
+    // titulo/conteudoHtml/conteudoEstruturado já commitados pelo worker, não só "deixando
+    // de reviver" (ver IRascunhoDocumentoRepositoryGeracaoAssincronaTest,
+    // saveDeEntidadeLidaAntesDoFinalizarComSucessoApagaOConteudoRecemGravado, que reproduz
+    // o bug). UPDATE condicional só na coluna status, mesmo padrão de
+    // reservarParaProcessamento/finalizarComSucesso/finalizarComErro — nunca toca nenhuma
+    // outra coluna, então não há como clobberar um resultado concorrente do worker.
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE RascunhoDocumentoEntity r
+               SET r.status = 'DESCARTADO'
+             WHERE r.id = :id
+               AND r.status IN :statusAtivos
+            """)
+    int descartar(@Param("id") UUID id, @Param("statusAtivos") Collection<StatusRascunho> statusAtivos);
 }

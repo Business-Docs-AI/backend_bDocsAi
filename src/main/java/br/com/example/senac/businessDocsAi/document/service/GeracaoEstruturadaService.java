@@ -4,7 +4,14 @@ import br.com.example.senac.businessDocsAi.chat.entity.MensagemEntity;
 import br.com.example.senac.businessDocsAi.chat.entity.Papel;
 import br.com.example.senac.businessDocsAi.chat.repository.IMensagemRepository;
 import br.com.example.senac.businessDocsAi.document.dto.estruturado.DocumentoEstruturadoDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.EscopoDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.EtapaDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.RaciEntryDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.RegraNegocioDTO;
+import br.com.example.senac.businessDocsAi.document.dto.estruturado.TipoRegraNegocio;
+import br.com.example.senac.businessDocsAi.document.entity.Confidencialidade;
 import br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.Tool;
@@ -15,7 +22,6 @@ import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.UserMessage;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -36,7 +42,6 @@ import java.util.UUID;
  * de {@link RascunhoDocumentoEntity}).
  */
 @Service
-@RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "bdocs.documentacao-estruturada", name = "enabled", havingValue = "true")
 public class GeracaoEstruturadaService {
 
@@ -55,9 +60,32 @@ public class GeracaoEstruturadaService {
     private final Validator beanValidator;
     private final EstruturaDocumentoHtmlRenderer renderer;
     private final ObjectMapper objectMapper;
-
-    @Qualifier("chatModelGeracaoEstruturada")
     private final ChatModel chatModelGeracaoEstruturada;
+
+    // Construtor explícito (em vez de @RequiredArgsConstructor do Lombok): Lombok NÃO copia
+    // @Qualifier do campo para o parâmetro do construtor gerado (confirmado via javap — o
+    // construtor gerado não tinha nenhuma RuntimeVisibleParameterAnnotations). Sem o
+    // @Qualifier chegando de fato ao parâmetro, a resolução de ambiguidade entre os 2 beans
+    // de ChatModel dependeria só do fallback do Spring por NOME do parâmetro == nome do bean
+    // (funciona hoje, mas quebra em silêncio — cai pro @Primary sem erro nenhum — se esse
+    // nome divergir no futuro). @Qualifier explícito aqui remove essa fragilidade.
+    public GeracaoEstruturadaService(
+            IRascunhoDocumentoRepository rascunhoRepository,
+            IMensagemRepository mensagemRepository,
+            DocumentoEstruturadoValidator validator,
+            Validator beanValidator,
+            EstruturaDocumentoHtmlRenderer renderer,
+            ObjectMapper objectMapper,
+            @Qualifier("chatModelGeracaoEstruturada") ChatModel chatModelGeracaoEstruturada
+    ) {
+        this.rascunhoRepository = rascunhoRepository;
+        this.mensagemRepository = mensagemRepository;
+        this.validator = validator;
+        this.beanValidator = beanValidator;
+        this.renderer = renderer;
+        this.objectMapper = objectMapper;
+        this.chatModelGeracaoEstruturada = chatModelGeracaoEstruturada;
+    }
 
     @Value("${bdocs.documentacao-estruturada.geracao.max-tentativas}")
     private int maxTentativas;
@@ -67,6 +95,21 @@ public class GeracaoEstruturadaService {
 
     @Value("${bdocs.documentacao-estruturada.geracao.material-max-caracteres}")
     private int materialMaxCaracteres;
+
+    // Etapa 13.6: modo de teste manual de ponta a ponta SEM gastar créditos da API real
+    // (regra de custo imposta após 2 recargas da Anthropic em 1 dia — ver
+    // docs/plano-documentacao-estruturada.md). Com true, NUNCA chama chatModelGeracaoEstruturada
+    // — devolve um documento fixo e válido depois de um atraso curto. @ConditionalOnProperty
+    // da classe já impede isto de existir com a feature desligada; mesmo assim, este campo
+    // NUNCA deve ser true fora de um teste manual deliberado (nunca em produção).
+    @Value("${bdocs.documentacao-estruturada.geracao.modelo-fake:false}")
+    private boolean modeloFake;
+
+    // Configurável (não uma constante) só pra testes automatizados poderem zerar o atraso —
+    // em uso manual real, o default (application.yaml) já é suficiente pra UI mostrar o
+    // estado GERANDO antes da proposta aparecer.
+    @Value("${bdocs.documentacao-estruturada.geracao.modelo-fake-atraso-ms:5000}")
+    private long atrasoModeloFakeMs;
 
     interface Assistente {
         String gerar(@UserMessage String material);
@@ -168,6 +211,10 @@ public class GeracaoEstruturadaService {
      * verdade (ver {@code GeracaoEstruturadaServiceTest}).
      */
     protected DocumentoEstruturadoDTO gerarDocumentoValidado(String material) {
+        if (modeloFake) {
+            return gerarDocumentoFake();
+        }
+
         FerramentaCaptura ferramenta = new FerramentaCaptura();
         ChatMemory chatMemory = MessageWindowChatMemory.withMaxMessages(JANELA_MEMORIA_MENSAGENS);
 
@@ -202,6 +249,62 @@ public class GeracaoEstruturadaService {
         }
 
         return ferramenta.capturado;
+    }
+
+    // Etapa 13.6: documento fixo e já válido (Bean + semântico) usado pelo modo
+    // modelo-fake — nunca toca chatModelGeracaoEstruturada/AiServices. Atraso curto só pra
+    // UI/polling terem o estado GERANDO pra mostrar; não simula latência real.
+    private DocumentoEstruturadoDTO gerarDocumentoFake() {
+        log.info("modelo-fake ativo: devolvendo documento de exemplo sem chamar a Anthropic.");
+        try {
+            Thread.sleep(atrasoModeloFakeMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        EtapaDTO etapaSolicitar = new EtapaDTO(
+                "E01", "Solicitar reembolso", "Colaborador registra a despesa de viagem e anexa o comprovante.",
+                "Colaborador", "Sistema de Despesas", List.of("Comprovante da despesa"),
+                List.of("Solicitação de reembolso registrada"), List.of(), "E02", null
+        );
+        EtapaDTO etapaAprovar = new EtapaDTO(
+                "E02", "Aprovar reembolso", "Gestor confere os valores contra a política e aprova ou rejeita.",
+                "Gestor do colaborador", null, List.of("Solicitação de reembolso registrada"),
+                List.of("Reembolso aprovado ou rejeitado"), List.of("RN-01"), null, null
+        );
+
+        return new DocumentoEstruturadoDTO(
+                "Política de Reembolso de Despesas de Viagem (exemplo — modelo-fake)",
+                TipoDocumento.PROCESSO,
+                "Definir as regras e o fluxo de reembolso de despesas de viagem a trabalho.",
+                new EscopoDTO(
+                        "Colaborador registra uma despesa de viagem", "Reembolso pago ou rejeitado",
+                        List.of("Alimentação", "Hospedagem", "Passagens aéreas"), List.of()
+                ),
+                "Colaborador retorna de uma viagem a trabalho com despesas a reembolsar",
+                List.of(new RaciEntryDTO("E02", "Gestor do colaborador", "Financeiro", List.of(), List.of("RH"))),
+                List.of(etapaSolicitar, etapaAprovar),
+                null,
+                List.of(new RegraNegocioDTO(
+                        "RN-01", "Limite de R$300/dia para alimentação e R$200/dia para hospedagem",
+                        TipoRegraNegocio.RESTRICAO, "Política interna (exemplo)"
+                )),
+                List.of(),
+                List.of("Sistema de Despesas"),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                List.of(),
+                "Financeiro",
+                "Gestor do colaborador",
+                12,
+                Confidencialidade.INTERNO,
+                List.of("reembolso", "modelo-fake")
+        );
     }
 
     // Bean Validation + validação semântica (DocumentoEstruturadoValidator) — "validação

@@ -264,6 +264,58 @@ class GeracaoEstruturadaServiceTest {
         assertThat(resposta).isEqualTo(GeracaoEstruturadaSystemPrompt.RETORNO_FERRAMENTA_PRIMEIRA_CHAMADA);
     }
 
+    // --- Modo modelo-fake (Etapa 13.6 — teste manual sem gastar créditos da API real) ---
+
+    @Test
+    void modeloFakeDevolveDocumentoValidoSemChamarChatModel() {
+        GeracaoEstruturadaService service = novoService();
+        ReflectionTestUtils.setField(service, "modeloFake", true);
+        ReflectionTestUtils.setField(service, "atrasoModeloFakeMs", 0L);
+
+        DocumentoEstruturadoDTO documento = service.gerarDocumentoValidado("material qualquer");
+
+        assertThat(documento).isNotNull();
+        assertThat(documento.titulo()).isNotBlank();
+        verifyNoInteractions(chatModelGeracaoEstruturada);
+    }
+
+    @Test
+    void modeloFakeDevolveDocumentoQuePassaNaValidacaoBeanEsemantica() {
+        GeracaoEstruturadaService service = novoService();
+        ReflectionTestUtils.setField(service, "modeloFake", true);
+        ReflectionTestUtils.setField(service, "atrasoModeloFakeMs", 0L);
+
+        GeracaoEstruturadaService.FerramentaCaptura ferramenta = new GeracaoEstruturadaService.FerramentaCaptura();
+        ferramenta.capturado = service.gerarDocumentoValidado("material qualquer");
+
+        assertThat(service.validarCapturado(ferramenta)).isEmpty();
+    }
+
+    @Test
+    void processarComModeloFakeFinalizaComSucessoSemChamarChatModel() {
+        UUID id = UUID.randomUUID();
+        RascunhoDocumentoEntity rascunho = rascunhoGerando(id, 0);
+        when(rascunhoRepository.reservarParaProcessamento(eq(id), any(), any(), anyInt())).thenReturn(1);
+        when(rascunhoRepository.findById(id)).thenReturn(Optional.of(rascunho));
+        when(mensagemRepository.findByConversaIdAndCriadoEmLessThanEqualOrderByCriadoEmAsc(any(), any()))
+                .thenReturn(List.of());
+        when(renderer.renderizar(any())).thenReturn("<h2>fake</h2>");
+        when(rascunhoRepository.finalizarComSucesso(any(), any(), any(), any(), any(), any())).thenReturn(1);
+
+        GeracaoEstruturadaService service = novoService();
+        ReflectionTestUtils.setField(service, "modeloFake", true);
+        ReflectionTestUtils.setField(service, "atrasoModeloFakeMs", 0L);
+
+        service.processar(id);
+
+        verify(rascunhoRepository).finalizarComSucesso(
+                eq(id), anyString(), eq("<h2>fake</h2>"), anyString(),
+                eq(DocumentoEstruturadoDTO.VERSAO_SCHEMA_ATUAL), eq(7L)
+        );
+        verify(rascunhoRepository, never()).finalizarComErro(any(), any());
+        verifyNoInteractions(chatModelGeracaoEstruturada);
+    }
+
     // --- Material-fonte (R4) ---
 
     @Test

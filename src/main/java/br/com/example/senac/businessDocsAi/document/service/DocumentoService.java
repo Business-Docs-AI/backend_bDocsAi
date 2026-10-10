@@ -151,6 +151,14 @@ public class DocumentoService {
         documento.setCriadoEm(LocalDateTime.now());
         documento.setDeletado(false);
         documento.setStatusCicloVida(StatusCicloVida.VIGENTE);
+        // Mesma regra de aplicarNovaVersao (usada por atualizarComEstrutura/restaurarVersao):
+        // o documento espelha o conteudoEstruturado/versaoSchema da sua própria versão
+        // atual, não só a linha em documento_versao — sem isto, documento.conteudo_estruturado
+        // ficava sempre nulo na CRIAÇÃO estruturada (só documento_versao tinha o valor),
+        // divergindo de atualizarComEstrutura/restaurarVersao (achado no teste manual E2E
+        // da Etapa 13.6, modo modelo-fake).
+        documento.setConteudoEstruturado(conteudoEstruturadoJson);
+        documento.setVersaoSchema(versaoSchema);
         aplicarMetadadosEstruturados(documento, null, metadados);
 
         DocumentoEntity salvo = documentoRepository.save(documento);

@@ -318,10 +318,6 @@ public class DocumentoTools {
 
         var contexto = ConversaContextHolder.atual();
 
-        // R1: um rascunho em GERANDO também pode ser descartado — se o worker terminar
-        // depois disso, finalizarComSucesso/finalizarComErro (UPDATE condicional em
-        // status='GERANDO') não vai mais encontrar a linha nesse status e descarta o
-        // resultado em silêncio, nunca revivendo um DESCARTADO.
         Optional<RascunhoDocumentoEntity> rascunhoOpt = rascunhoRepository
                 .findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.ativos());
 
@@ -329,9 +325,19 @@ public class DocumentoTools {
             return "Não há nenhuma proposta pendente para descartar nesta conversa.";
         }
 
-        RascunhoDocumentoEntity rascunho = rascunhoOpt.get();
-        rascunho.setStatus(StatusRascunho.DESCARTADO);
-        rascunhoRepository.save(rascunho);
+        // R1: um rascunho em GERANDO também pode ser descartado. UPDATE condicional só na
+        // coluna status (nunca um save() da entidade inteira, lida antes desta chamada) —
+        // se o worker terminar (finalizarComSucesso/finalizarComErro) ENTRE o findFirst
+        // acima e este descartar(), o resultado dele já está commitado com status != GERANDO
+        // e este UPDATE simplesmente não encontra mais a linha elegível (0 linhas afetadas,
+        // tratado abaixo); nunca reescreve/apaga titulo/conteudoHtml/conteudoEstruturado já
+        // gravados pelo worker, que é o bug que esta troca corrige (ver
+        // IRascunhoDocumentoRepositoryGeracaoAssincronaTest).
+        int descartados = rascunhoRepository.descartar(rascunhoOpt.get().getId(), StatusRascunho.ativos());
+        if (descartados == 0) {
+            return "Essa proposta não está mais ativa — talvez já tenha terminado de gerar ou já tenha "
+                    + "sido descartada. Confira o painel antes de tentar de novo.";
+        }
 
         return "Proposta descartada. Nada foi salvo.";
     }

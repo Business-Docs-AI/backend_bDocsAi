@@ -106,13 +106,25 @@ public class ChatModelConfig {
             @Value("${app.ai.anthropic-api-key}") String anthropicApiKey,
             @Value("${app.ai.anthropic-chat-model}") String anthropicModelName,
             @Value("${bdocs.documentacao-estruturada.geracao.max-tokens}") int maxTokens,
-            @Value("${bdocs.documentacao-estruturada.geracao.timeout-segundos}") int timeoutSegundos
+            @Value("${bdocs.documentacao-estruturada.geracao.timeout-segundos}") int timeoutSegundos,
+            // R3 já tem seu próprio mecanismo de tentativas (reservarParaProcessamento +
+            // job de segurança) — sem isto, o default do langchain4j (maxRetries=2, 3
+            // tentativas HTTP internas por chamada) multiplicaria silenciosamente o custo e
+            // a latência de CADA tentativa do R3 (cada uma já gera ~14k tokens de saída).
+            // Default 0: quem decide se tenta de novo é o R3, nunca o cliente HTTP.
+            @Value("${bdocs.documentacao-estruturada.geracao.max-retries-http:0}") int maxRetriesHttp
     ) {
+        org.slf4j.LoggerFactory.getLogger(ChatModelConfig.class).info(
+                "ChatModel dedicado à geração estruturada (worker) configurado: modelo={} "
+                        + "maxTokens={} timeoutSegundos={} maxRetriesHttp={}",
+                anthropicModelName, maxTokens, timeoutSegundos, maxRetriesHttp
+        );
         return AnthropicChatModel.builder()
                 .apiKey(anthropicApiKey)
                 .modelName(anthropicModelName)
                 .maxTokens(maxTokens)
                 .timeout(Duration.ofSeconds(timeoutSegundos))
+                .maxRetries(maxRetriesHttp)
                 .listeners(java.util.List.of(new GeracaoEstruturadaCustoListener()))
                 .build();
     }

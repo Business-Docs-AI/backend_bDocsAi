@@ -64,6 +64,11 @@ bdocs:
       # dedicado do worker (Etapa 13.2), nunca para o chatModel do chat interativo.
       max-tokens: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MAX_TOKENS:16384}
       timeout-segundos: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_TIMEOUT_SEGUNDOS:240}
+      # Tentativas automáticas do CLIENTE HTTP do langchain4j (nível de chamada à API),
+      # separadas das tentativas do R3 (nível de rascunho, ver max-tentativas abaixo). O
+      # default do langchain4j é 2 (3 chamadas por tentativa) — mantemos 0 aqui para que só
+      # o R3 decida se vale a pena gerar de novo (cada chamada já custa ~14k tokens).
+      max-retries-http: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MAX_RETRIES_HTTP:0}
       # R3: limite de tentativas por rascunho antes de desistir (ERRO_GERACAO).
       max-tentativas: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MAX_TENTATIVAS:2}
       # R3: o job de segurança só considera um rascunho "preso" em GERANDO após esse tempo
@@ -74,3 +79,11 @@ bdocs:
       # extraídos + instruções) — acima disso, ERRO_GERACAO com mensagem clara em vez de
       # uma chamada lenta/cara sem necessidade.
       material-max-caracteres: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MATERIAL_MAX_CARACTERES:60000}
+      # Etapa 13.6 (teste manual de ponta a ponta sem gastar créditos da API real): com
+      # true, o worker NUNCA chama a Anthropic — devolve um documento de exemplo (fixo,
+      # válido) depois de alguns segundos. Default false. NUNCA deve ser true em produção —
+      # existe só para exercitar reserva/concorrência/polling/UI do fluxo assíncrono.
+      modelo-fake: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE:false}
+      # Atraso do modo modelo-fake antes de devolver o documento de exemplo — só pra UI ter
+      # o estado GERANDO pra mostrar; não simula a latência real da Anthropic.
+      modelo-fake-atraso-ms: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE_ATRASO_MS:5000}

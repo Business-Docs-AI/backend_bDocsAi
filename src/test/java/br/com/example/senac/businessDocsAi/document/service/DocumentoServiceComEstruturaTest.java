@@ -100,6 +100,12 @@ class DocumentoServiceComEstruturaTest {
         assertThat(salvo.getConfidencialidade()).isEqualTo(Confidencialidade.INTERNO);
         assertThat(salvo.getTags()).containsExactly("reembolso");
         assertThat(salvo.getStatusCicloVida()).isEqualTo(StatusCicloVida.VIGENTE);
+        // O documento espelha conteudoEstruturado/versaoSchema da sua própria versão atual
+        // (mesma regra de aplicarNovaVersao, usada por atualizarComEstrutura/restaurarVersao)
+        // — achado faltando neste teste até o teste manual E2E da Etapa 13.6 revelar que só
+        // documento_versao recebia o valor na CRIAÇÃO estruturada.
+        assertThat(salvo.getConteudoEstruturado()).isEqualTo("{\"objetivo\":\"x\"}");
+        assertThat(salvo.getVersaoSchema()).isEqualTo("1.0");
 
         ArgumentCaptor<DocumentoVersaoEntity> versaoCaptor = ArgumentCaptor.forClass(DocumentoVersaoEntity.class);
         verify(documentoVersaoRepository).save(versaoCaptor.capture());

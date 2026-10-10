@@ -31,6 +31,13 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-3.8-flash}
 
+      # Documentação estruturada (Etapa 1+) — defaults iguais aos de application.yaml, pra
+      # não mudar nada do comportamento atual quando não definidas.
+      DOCUMENTACAO_ESTRUTURADA_ENABLED: ${DOCUMENTACAO_ESTRUTURADA_ENABLED:-false}
+      DOCUMENTACAO_ESTRUTURADA_PROVEDORES: ${DOCUMENTACAO_ESTRUTURADA_PROVEDORES:-anthropic}
+      DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE:-false}
+      DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE_ATRASO_MS: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE_ATRASO_MS:-5000}
+
     depends_on:
       postgres:
         condition: service_healthy

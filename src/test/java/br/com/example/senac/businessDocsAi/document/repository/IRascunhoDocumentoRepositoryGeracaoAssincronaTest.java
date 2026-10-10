@@ -198,6 +198,73 @@ class IRascunhoDocumentoRepositoryGeracaoAssincronaTest {
         assertThat(recarregado.getConteudoHtml()).isNull();
     }
 
+    // R1, direção OPOSTA (achada no teste manual E2E da Etapa 13.6, modo modelo-fake):
+    // DocumentoTools.descartarRascunhoPendente() ANTES desta etapa lia a entidade
+    // (findFirst...), mudava só status e chamava save() — um UPDATE incondicional de TODAS
+    // as colunas com os valores que a entidade tinha NO MOMENTO DA LEITURA. Se o worker
+    // terminasse com sucesso ENTRE essa leitura e esse save, o save() do descarte
+    // reescrevia a linha inteira com os valores ANTIGOS (conteudoHtml/conteudoEstruturado/
+    // titulo nulos/velhos), apagando o resultado que acabou de ser gravado — não era só
+    // "não reviver", era perder dado já commitado.
+    //
+    // Este teste documenta DELIBERADAMENTE esse comportamento perigoso de save() de uma
+    // entidade desatualizada — é exatamente por isso que descartarRascunhoPendente() foi
+    // trocado para usar o novo método condicional repository.descartar() (só a coluna
+    // status, mesmo padrão de reservarParaProcessamento/finalizarComSucesso/
+    // finalizarComErro — ver DocumentoToolsTest para a prova de que o tool não usa mais
+    // save() da entidade inteira). Não é um teste do comportamento desejado — é a prova de
+    // por que o padrão antigo era inseguro, para nunca ser reintroduzido em código novo.
+    @Test
+    void saveDeEntidadeDesatualizadaSobrescreveConteudoCommitadoPeloWorker_antiPadrao() {
+        RascunhoDocumentoEntity salvo = novoRascunhoGerando();
+
+        // Leitura ANTES do worker terminar (o antigo primeiro passo de descartarRascunhoPendente()).
+        RascunhoDocumentoEntity entidadeDesatualizada = repository.findById(salvo.getId()).orElseThrow();
+
+        // Worker termina com sucesso nesse meio-tempo (UPDATE condicional, R3) — commita
+        // titulo/conteudoHtml/conteudoEstruturado de verdade.
+        int afetados = repository.finalizarComSucesso(
+                salvo.getId(), "Titulo final", "<h2>Objetivo</h2>", "{\"objetivo\":\"x\"}", "1.0", 7L
+        );
+        assertThat(afetados).isEqualTo(1);
+
+        // save() de uma entidade JPA inteira, carregada ANTES do commit acima, sobrescreve
+        // TODAS as colunas com os valores antigos — isto é comportamento padrão do JPA
+        // save(), não um bug do Hibernate; o bug era usar esse padrão aqui.
+        entidadeDesatualizada.setStatus(StatusRascunho.DESCARTADO);
+        repository.save(entidadeDesatualizada);
+
+        RascunhoDocumentoEntity recarregado = repository.findById(salvo.getId()).orElseThrow();
+        assertThat(recarregado.getStatus()).isEqualTo(StatusRascunho.DESCARTADO);
+        // Prova do anti-padrão: o conteúdo que o worker acabou de commitar foi perdido.
+        assertThat(recarregado.getConteudoHtml()).isNull();
+        assertThat(recarregado.getConteudoEstruturado()).isNull();
+    }
+
+    // Contraponto do teste acima: o método condicional NOVO (descartar(), só a coluna
+    // status) não sofre do mesmo problema — o resultado do worker permanece intacto mesmo
+    // descartando entre a leitura e a escrita.
+    @Test
+    void descartarCondicionalNaoApagaConteudoJaCommitadoPeloWorker() {
+        RascunhoDocumentoEntity salvo = novoRascunhoGerando();
+
+        repository.findById(salvo.getId()).orElseThrow(); // leitura, igual ao tool faz
+
+        int afetados = repository.finalizarComSucesso(
+                salvo.getId(), "Titulo final", "<h2>Objetivo</h2>", "{\"objetivo\":\"x\"}", "1.0", 7L
+        );
+        assertThat(afetados).isEqualTo(1);
+
+        int descartados = repository.descartar(salvo.getId(), StatusRascunho.ativos());
+        assertThat(descartados).isEqualTo(1);
+
+        RascunhoDocumentoEntity recarregado = repository.findById(salvo.getId()).orElseThrow();
+        assertThat(recarregado.getStatus()).isEqualTo(StatusRascunho.DESCARTADO);
+        assertThat(recarregado.getConteudoHtml()).isEqualTo("<h2>Objetivo</h2>");
+        assertThat(recarregado.getConteudoEstruturado()).isEqualToIgnoringWhitespace("{\"objetivo\":\"x\"}");
+        assertThat(recarregado.getTitulo()).isEqualTo("Titulo final");
+    }
+
     @Test
     void finalizarComErroSoAplicaSeAindaEstiverGerando() {
         RascunhoDocumentoEntity salvo = novoRascunhoGerando();

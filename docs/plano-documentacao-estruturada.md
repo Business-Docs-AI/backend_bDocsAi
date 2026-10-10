@@ -17,6 +17,30 @@ retome a partir daqui (coluna "Status").
 - Teste existente nunca pode regredir. Toda etapa fecha com suíte 100% verde.
 - Um commit por etapa, só depois do OK explícito do usuário.
 
+## Regra de custo da API da Anthropic (2026-10-10, vale para todo o restante do projeto)
+
+Motivo: o consumo de créditos saiu do controle esperado (2 recargas em 1 dia,
+quando antes uma recarga durava uma semana) — investigações empíricas
+repetidas (Etapas 10/11/11b/Haiku) e testes manuais de ponta a ponta somaram
+muitas chamadas reais de ~14-16k tokens de saída cada.
+
+1. **Nenhuma chamada real à API da Anthropic sem autorização explícita do
+   usuário naquele momento.** Antes de pedir, informar quantas chamadas serão
+   feitas e a estimativa de tokens.
+2. Nunca repetir testes de coisas já validadas.
+3. Testes automatizados e CI continuam sem chave (modelo mockado) — nada
+   muda aqui.
+4. Nada de loops, novas tentativas ou "só mais uma rodada" com a API real.
+   Falhou, parar e reportar — nunca tentar de novo por conta própria.
+5. Etapas 14 em diante não devem precisar da API da Anthropic. Se alguma
+   precisar, parar e pedir autorização antes.
+
+Mecanismo criado para viabilizar testes manuais de ponta a ponta sem gastar
+créditos: modo `modelo-fake` do worker de geração assíncrona (ver Etapa
+13.6) — devolve um documento de exemplo fixo e válido sem nunca chamar a
+Anthropic. Ver "Total de chamadas reais à API desde o início da Etapa 13"
+no fechamento da Etapa 13.6 para o registro de uso até aqui.
+
 ## Flags
 
 | Flag | Default | Controla |
@@ -1316,3 +1340,107 @@ e teste manual no browser, ver relatório final).
   componente, ou passar de um teto de 5 minutos. Sem WebSocket/SSE.
   Com a flag desligada no backend, `status` nunca é `'GERANDO'` —
   nenhum polling novo chega a começar.
+
+#### Bug 1 (produção, achado após o redeploy) — falta de `@Transactional` nos métodos do worker
+
+Teste manual de ponta a ponta com a flag ligada: rascunho ficou preso em
+`GERANDO` indefinidamente. Diagnóstico (DB + logs + análise da própria
+espera, pedido explicitamente pelo usuário antes de corrigir):
+`reservarParaProcessamento`/`finalizarComSucesso`/`finalizarComErro`
+(`@Modifying(flushAutomatically=true)`) exigem uma transação ativa;
+nem `GeracaoEstruturadaListener` (`@Async`) nem `GeracaoEstruturadaJob`
+(`@Scheduled`) nem `GeracaoEstruturadaService.processar()` tinham
+`@Transactional` — falhava em produção com `InvalidDataAccessApiUsageException`
+("No EntityManager with actual transaction available"), mascarado nos
+testes porque `IRascunhoDocumentoRepositoryGeracaoAssincronaTest` é
+`@Transactional` na própria classe (fornece uma transação "de graça").
+
+- **Correção**: `@Transactional` direto nos 3 métodos de
+  `IRascunhoDocumentoRepository` (garante transação própria
+  independente de quem chama).
+- **Teste novo**: `IRascunhoDocumentoRepositorySemTransacaoAmbienteTest`
+  (deliberadamente SEM `@Transactional` na classe) — 3 testes,
+  reproduz e confirma a correção.
+- Também corrigidos nessa mesma rodada (achados ao investigar por que a
+  geração real, já com o fix acima, ainda timeoutava):
+  - `GeracaoEstruturadaService` usava `@RequiredArgsConstructor` do
+    Lombok, que **não copia `@Qualifier` do campo pro parâmetro do
+    construtor gerado** (confirmado via `javap`) — a resolução do
+    `ChatModel` dedicado dependia só do fallback do Spring por nome
+    (funciona, mas quebra em silêncio pro `@Primary` se o nome um dia
+    divergir). Trocado por construtor explícito com `@Qualifier` no
+    parâmetro. Teste novo: `GeracaoEstruturadaBeansLigadoComAFlagTest`
+    passa a provar (via `ReflectionTestUtils`) que o worker recebe de
+    fato o bean dedicado, não o `@Primary`.
+  - `maxRetries` do `AnthropicChatModel` do worker nunca era setado —
+    default do langchain4j é 2 (confirmado via `javap`), multiplicando
+    silenciosamente o custo/latência de CADA tentativa do R3 (que já
+    tem seu próprio mecanismo de retry). Novo
+    `maxRetries(maxRetriesHttp)`, configurável via
+    `geracao.max-retries-http` (default 0 — só o R3 decide se tenta de
+    novo). Log de inicialização novo com a config efetiva (modelo,
+    maxTokens, timeout, maxRetriesHttp — nunca a chave).
+
+#### Bug 2 — `criarComEstrutura` não espelhava `conteudo_estruturado`/`versao_schema` no `documento`
+
+Achado no teste manual E2E (modo `modelo-fake`, ver abaixo): depois de
+confirmar uma proposta estruturada NOVA (criação, não atualização), a
+coluna `documento.conteudo_estruturado` ficava `NULL` — só
+`documento_versao` tinha o valor. `atualizarComEstrutura`/
+`restaurarVersao` (via `aplicarNovaVersao`) sempre espelharam esses 2
+campos na linha `documento`; `criarComEstrutura` chamava
+`registrarNovaVersao` direto (só grava a versão), pulando esse espelho.
+
+- **Correção**: `criarComEstrutura` agora seta
+  `documento.setConteudoEstruturado(...)`/`setVersaoSchema(...)` antes
+  de salvar, mesma regra de `aplicarNovaVersao`.
+- **Teste**: `DocumentoServiceComEstruturaTest.criarComEstruturaAplicaMetadadosNoDocumentoEGravaConteudoEstruturadoNaVersao`
+  ganhou as 2 asserções que faltavam (o teste existente só conferia a
+  versão, nunca o `documento` — por isso o bug passou despercebido por
+  243 testes).
+
+#### Bug 3 — `descartarRascunhoPendente()` podia apagar um resultado que o worker tinha acabado de commitar
+
+Achado no teste manual E2E (descartar durante a geração, modo
+`modelo-fake`): o tool fazia `findFirst...()` (lê a entidade) → muda só
+`status` em memória → `save()` da entidade INTEIRA. Se o worker
+terminasse (`finalizarComSucesso`, UPDATE condicional em
+`status='GERANDO'`) ENTRE essa leitura e esse `save()`, o `save()` do
+descarte reescrevia TODAS as colunas com os valores ANTIGOS da leitura
+— apagando `titulo`/`conteudo_html`/`conteudo_estruturado` que o worker
+tinha acabado de gravar. Não era "deixar de reviver" (o que R1 já
+cobria) — era perder dado já commitado.
+
+- **Correção**: novo método `IRascunhoDocumentoRepository.descartar(id,
+  statusAtivos)` — UPDATE condicional só na coluna `status` (mesmo
+  padrão de `reservarParaProcessamento`/`finalizarComSucesso`/
+  `finalizarComErro`), nunca toca nenhuma outra coluna.
+  `descartarRascunhoPendente()` trocado para usar esse método em vez de
+  `save()` da entidade inteira.
+- **Testes**: `IRascunhoDocumentoRepositoryGeracaoAssincronaTest` ganhou
+  2 testes novos —
+  `saveDeEntidadeDesatualizadaSobrescreveConteudoCommitadoPeloWorker_antiPadrao`
+  (documenta deliberadamente o comportamento perigoso do `save()`
+  antigo — prova de por que a troca era necessária) e
+  `descartarCondicionalNaoApagaConteudoJaCommitadoPeloWorker` (prova
+  que o método novo não sofre do mesmo problema). `DocumentoToolsTest`
+  — os 2 testes existentes de descarte atualizados pro novo método
+  condicional (não mais `save()`), e 1 teste novo pro caso
+  `descartados=0` (worker terminou ou já foi descartado nesse
+  meio-tempo).
+- Suíte completa (execução real, sem `ANTHROPIC_API_KEY`, igual ao CI):
+  **246/246 passando, 0 skipped, 0 falhas, 0 erros**.
+
+#### Modo `modelo-fake` — teste manual sem gastar créditos da API real
+
+Regra de custo imposta em 2026-10-10 (ver seção no topo do arquivo) após
+2 recargas da Anthropic em 1 dia. Novo
+`bdocs.documentacao-estruturada.geracao.modelo-fake` (default `false`,
+NUNCA ligado em produção): com `true`, `GeracaoEstruturadaService` NUNCA
+chama `chatModelGeracaoEstruturada` — devolve um documento de exemplo
+fixo e válido (processo de reembolso, 2 etapas, 1 regra, RACI, Bean +
+semanticamente válido) depois de um atraso curto e configurável
+(`modelo-fake-atraso-ms`, default 5000ms — só pra UI ter o estado
+GERANDO pra mostrar). Usado pra todo o teste manual de ponta a ponta
+(A, abaixo) — Parte B (1 geração real) é a única chamada que de fato
+usa a Anthropic.

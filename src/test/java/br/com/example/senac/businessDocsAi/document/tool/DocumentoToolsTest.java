@@ -184,12 +184,32 @@ class DocumentoToolsTest {
 
         when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
+        when(rascunhoRepository.descartar(rascunho.getId(), StatusRascunho.ativos())).thenReturn(1);
 
         String resposta = documentoTools.descartarRascunhoPendente();
 
-        assertThat(rascunho.getStatus()).isEqualTo(StatusRascunho.DESCARTADO);
+        // UPDATE condicional (não save() da entidade inteira) — ver bug corrigido em
+        // IRascunhoDocumentoRepositoryGeracaoAssincronaTest,
+        // saveDeEntidadeLidaAntesDoFinalizarComSucessoApagaOConteudoRecemGravado.
+        verify(rascunhoRepository).descartar(rascunho.getId(), StatusRascunho.ativos());
+        verify(rascunhoRepository, never()).save(any());
         assertThat(resposta).containsIgnoringCase("descartada");
         verifyNoInteractions(documentoService);
+    }
+
+    @Test
+    void descartarRascunhoPendenteQuandoWorkerJaTerminouAvisaQueNaoEstaMaisAtiva() {
+        RascunhoDocumentoEntity rascunho = rascunhoCriar(UUID.randomUUID());
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(rascunho));
+        // affected=0: o worker terminou (ou outro descarte já rodou) entre o findFirst e o
+        // descartar() — a linha não está mais em nenhum status ativo.
+        when(rascunhoRepository.descartar(rascunho.getId(), StatusRascunho.ativos())).thenReturn(0);
+
+        String resposta = documentoTools.descartarRascunhoPendente();
+
+        assertThat(resposta).containsIgnoringCase("não está mais ativa");
     }
 
     private RascunhoDocumentoEntity rascunhoCriar(UUID turno) {
@@ -248,14 +268,17 @@ class DocumentoToolsTest {
 
     @Test
     void descartarRascunhoEmGerandoFunciona() {
+        UUID id = UUID.randomUUID();
         RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setId(id);
         gerando.setStatus(StatusRascunho.GERANDO);
         when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(gerando));
+        when(rascunhoRepository.descartar(id, StatusRascunho.ativos())).thenReturn(1);
 
         String resposta = documentoTools.descartarRascunhoPendente();
 
-        assertThat(gerando.getStatus()).isEqualTo(StatusRascunho.DESCARTADO);
+        verify(rascunhoRepository).descartar(id, StatusRascunho.ativos());
         assertThat(resposta).containsIgnoringCase("descartada");
     }
 
