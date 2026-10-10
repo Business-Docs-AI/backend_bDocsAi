@@ -69,20 +69,36 @@ vence utility classes — mitigar com `important` escopado ou aplicando
 Tailwind primeiro em componentes sem MUI por baixo); ordem de injeção
 de CSS no Vite (Tailwind depois do Emotion).
 
-Duas opções de escopo, ainda não decididas entre si:
-- **A — Tailwind substitui CSS puro/avulso, MANTÉM os componentes MUI**:
-  esforço baixo-médio, incremental, baixo risco (não há `styled()` nem
-  CSS puro significativo pra desembaraçar).
-  - **B — Tailwind substitui tudo, REMOVE o MUI**: esforço alto —
-  reconstrução de ~30 componentes (vários com lógica de portal/
-  posicionamento, não só estilo) com uma lib de primitivos acessíveis
-  + Tailwind; sem testes automatizados no frontend, risco alto de
-  regressão funcional, não só visual.
+**Opções revisadas (2026-10-10, pós-levantamento) — decisão fica com o
+time**: o levantamento confirmou só 17 linhas de CSS puro no projeto
+inteiro (`global.css`) e absolutamente todo o estilo real vivendo em
+componentes MUI (`sx=`) — ou seja, não existe uma opção "só trocar o
+CSS solto" que valha a pena isoladamente; as duas opções reais mexem
+com os componentes MUI em algum grau:
 
-Migração incremental proposta: 1 PR por página/componente, screenshot
-antes/depois de cada tela (sem teste automatizado, validação visual é
-obrigatória), ordem sugerida por risco crescente (tema → páginas
-simples → páginas com formulário → Chat, a mais complexa).
+- **C — Híbrido**: Tailwind entra para layout/espaçamento/responsividade
+  (grid, flex, spacing, breakpoints), MUI continua para os componentes
+  interativos que já têm lógica própria (Dialog, Menu, AppBar, Drawer,
+  Snackbar, CircularProgress, ~25 ícones) — mantém a acessibilidade e o
+  comportamento de portal/posicionamento desses ~30 componentes sem
+  reconstruir nada, troca gradualmente só a camada visual. Risco
+  baixo-médio, mas convive com dois sistemas de estilo
+  indefinidamente (ver riscos de convivência acima).
+- **B' — Migração completa para Tailwind + shadcn/ui**: remove o MUI
+  por inteiro, reconstrói os ~30 componentes sobre Radix (via
+  shadcn/ui, que já empacota primitivos acessíveis + Tailwind, em vez
+  de montar na mão) — esforço alto, mas elimina a convivência de dois
+  sistemas no final. **Gradual, uma tela por vez** (não um corte único):
+  1 PR por página/componente, screenshot antes/depois de cada tela
+  (sem teste automatizado no frontend, validação visual é
+  obrigatória), ordem sugerida por risco crescente (tema → páginas
+  simples → páginas com formulário → Chat, a mais complexa) — mesma
+  lógica incremental já prevista para a opção A original, agora
+  aplicada à migração completa.
+
+Nenhuma das duas foi escolhida ainda — decisão fica com o time, migração
+não começa antes disso (nem antes das Etapas 19/20 ficarem prontas,
+como já registrado acima).
 
 ## Flags
 
