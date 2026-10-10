@@ -1702,3 +1702,93 @@ GET do documento — nada novo necessário aí.
   ganhou uma asserção nova (`proximaRevisao` calculada) no teste já
   existente, não um teste novo.
 - Suíte completa: 280/280 passando, 0 falhas, 0 erros (era 277).
+
+### Fix pós-Etapa-18 — `categoria_id` não é garantidamente não-nulo (commit `80fab78`, 2026-10-10)
+
+Achado em teste manual live, logo após o deploy conjunto das Etapas
+14-18: `IndexacaoService` assumia `documento.categoriaId` sempre
+presente (não-nulo). A constraint `NOT NULL` usada como base pertencia
+a uma tabela LEGADA homônima (`documentation`, `V1__baseline_schema.sql`),
+não à tabela `documento` real (`V6__add_categoria_a_documento_e_usuario.sql`,
+sem `NOT NULL`). Existe pelo menos 1 documento real sem categoria em
+produção — toda vez que o job de segurança tentava reindexá-lo,
+`NullPointerException`, log de erro recorrente, documento nunca
+indexado/buscável.
+
+- **Correção**: `categoria_id` tratado como os outros 3 metadados
+  opcionais (omitido quando ausente, nunca usado no pré-filtro mesmo
+  assim). `RagCicloVidaFiltroService` passa a checar SÓ
+  `status_ciclo_vida IS NULL` pra detectar chunk órfão — `categoria_id`
+  nulo é um estado legítimo (documento sem categoria), não indício de
+  "nunca reindexado desde a Etapa 14".
+- Teste novo: `indexaNormalmenteDocumentoSemCategoriaOmitindoOMetadado`.
+- Confirmado ao vivo: documento foi de `ERRO` para `INDEXADO` após o
+  redeploy, erro parou de recorrer.
+- Suíte completa: 281/281 passando, 0 falhas, 0 erros.
+
+### Verificação V1-V4 do RAG (pedida antes de fechar a Etapa 16, 2026-10-10)
+
+**V1 — proteção × documento sem categoria**: confirmado ao vivo, `GET
+/admin/reindexacao/status` → `{"chunksSemMetadado":0,...}` mesmo com o
+documento sem categoria presente — a correção do fix acima (checar só
+`status_ciclo_vida`) já resolve isso; `categoria_id` nulo nunca conta
+como chunk órfão. Confirmado também via SQL direto nos chunks desse
+documento: `categoria_id` vazio, `status_ciclo_vida='VIGENTE'`.
+
+**V2 — visibilidade do documento sem categoria**: confirmado ao vivo
+(listagem `/documentos` e busca `/documentos/busca`, com um usuário
+USUARIO de teste restrito à categoria RH) que ADMIN vê o documento e
+USUARIO/EDITOR não — `CategoriaAccessService.podeAcessarCategoria(null)`
+é sempre `false` pra não-admin, sempre `true` pra admin, independente
+do pré-filtro (que nunca toca `categoria_id`). Provado com teste nos
+dois serviços de leitura (`PesquisaServiceTest`/`RagAssistantConfigTest`):
+visibilidade idêntica com o pré-filtro presente ou ausente.
+**Achado à parte** (fora do escopo do V2 original, documentado em
+teste, não corrigido): em `RagAssistantConfig`, ADMIN pula
+`acessivelPelaCategoria` por inteiro (branch `isAdmin()` separado) —
+nunca chega a checar `isVigente()` pra admin; já `PesquisaService`
+aplica `isVigente()` mesmo pra admin (só pula a checagem de categoria).
+Resultado prático idêntico pro caso sem categoria (ambos mostram pro
+admin), mas os dois serviços tratariam um documento OBSOLETO de forma
+diferente pro ADMIN — decisão de produto a confirmar com o usuário, não
+um bug óbvio.
+
+**V3 — comparação com a flag ligada**: repetida com
+`RAG_FILTROS_CICLO_VIDA_ENABLED=true`, 5 consultas variadas
+("processo de vendas", "política de férias", "cadastro de produto",
+"emissão de documentos fiscais", "processo de compras") × 2 perfis
+(ADMIN; USUARIO de teste restrito à categoria Recursos Humanos) = 10
+comparações. **Diff = 0 em todas as 10** — nenhum documento apareceu ou
+sumiu em nenhuma combinação consulta/perfil com a flag ligada vs.
+desligada. Flag revertida pra `false` ao final (usuário de teste
+também removido).
+
+**V4 — gatilhos da Etapa 17 (B4)**: dos 3 gatilhos combinados, 2 já
+funcionavam (mudança de status via `atualizarStatusCicloVida`, Etapa
+17; confirmação de rascunho estruturado via `criarComEstrutura`/
+`atualizarComEstrutura`, cobertura de teste nova adicionada agora — o
+código já publicava o evento desde a Etapa 13.6, só faltava a
+verificação explícita). **1 gatilho tinha um gap real, corrigido**:
+`atualizar()` (fluxo legado) setava `categoria_id` ANTES de checar o
+hash do conteúdo — mudar só a categoria (conteúdo idêntico) atualizava
+a coluna no banco mas nunca disparava reindexação (early return sem
+publicar evento), deixando o metadado do chunk dessincronizado.
+Corrigido: publica o evento (mesma versão, sem incrementar) quando a
+categoria muda, mesmo sem nova versão de conteúdo; não publica quando
+nada muda. Também corrigido: `proximaRevisao` só era recalculada em
+`aplicarMetadadosEstruturados` (criação/atualização estruturada) — uma
+atualização de CONTEÚDO pelo fluxo legado (sem bloco de metadados)
+nunca recalculava, mesmo com `periodicidadeRevisaoMeses` já definido.
+Movido pra dentro de `aplicarNovaVersao` (chamado por toda nova versão:
+legado, estruturado, restauração), redundante-mas-inofensivo com a
+chamada existente pro caminho estruturado.
+
+- Testes novos: 6 (`atualizarSoACategoriaSemMudarOConteudoPreservaOEstruturadoNaoVersionaEDisparaReindexacao`,
+  `atualizarSemMudarCategoriaNemConteudoNaoDisparaReindexacao`,
+  `atualizarPeloFluxoLegadoComMudancaDeConteudoRecalculaProximaRevisao`
+  em `DocumentoServiceTest`; 2 asserções de evento adicionadas aos
+  testes existentes de `criarComEstrutura`/`atualizarComEstrutura` em
+  `DocumentoServiceComEstruturaTest`; 2 em `PesquisaServiceTest`
+  (visibilidade sem categoria, ADMIN/não-ADMIN); 2 em
+  `RagAssistantConfigTest` (idem)).
+- Suíte completa: 287/287 passando, 0 falhas, 0 erros (era 281).

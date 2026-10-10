@@ -186,6 +186,56 @@ class PesquisaServiceTest {
         assertThat(captor.getValue().filter()).isNull();
     }
 
+    // --- V2 (verificação pós-Etapa-16): visibilidade do documento SEM categoria não muda
+    // com o pré-filtro ligado — o pré-filtro só toca status_ciclo_vida (nunca categoria_id),
+    // então quem decide visibilidade por categoria continua sendo só o filtro pós-busca,
+    // idêntico nos dois casos. ---
+
+    @Test
+    void documentoSemCategoriaContinuaInvisivelParaNaoAdminComOPreFiltroLigado() {
+        UUID documentoSemCategoria = UUID.randomUUID();
+        DocumentoEntity semCategoria = documentoAtivo(documentoSemCategoria);
+        semCategoria.setCategoriaId(null);
+
+        when(documentoRepository.findById(documentoSemCategoria)).thenReturn(Optional.of(semCategoria));
+        // Não-admin: podeAcessarCategoria(null) é sempre false (CategoriaAccessService) —
+        // simulado aqui diretamente, já que é o resultado que importa pro filtro.
+        when(categoriaAccessService.podeAcessarCategoria(null)).thenReturn(false);
+
+        Filter preFiltro = MetadataFilterBuilder.metadataKey("status_ciclo_vida").isEqualTo("VIGENTE");
+        when(ragCicloVidaFiltroService.filtroStatusVigente()).thenReturn(Optional.of(preFiltro));
+
+        EmbeddingMatch<TextSegment> match = match(documentoSemCategoria, "Doc Sem Categoria", "intro", "Trecho", 0.9);
+        when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
+                .thenReturn(new EmbeddingSearchResult<>(List.of(match)));
+
+        List<ResultadoBuscaDTO> resultados = pesquisaService.buscar("consulta");
+
+        assertThat(resultados).isEmpty();
+    }
+
+    @Test
+    void documentoSemCategoriaContinuaVisivelParaAdminComOPreFiltroLigado() {
+        UUID documentoSemCategoria = UUID.randomUUID();
+        DocumentoEntity semCategoria = documentoAtivo(documentoSemCategoria);
+        semCategoria.setCategoriaId(null);
+
+        when(documentoRepository.findById(documentoSemCategoria)).thenReturn(Optional.of(semCategoria));
+        // ADMIN: CategoriaAccessService.podeAcessarCategoria sempre true, mesmo com null.
+        when(categoriaAccessService.podeAcessarCategoria(null)).thenReturn(true);
+
+        Filter preFiltro = MetadataFilterBuilder.metadataKey("status_ciclo_vida").isEqualTo("VIGENTE");
+        when(ragCicloVidaFiltroService.filtroStatusVigente()).thenReturn(Optional.of(preFiltro));
+
+        EmbeddingMatch<TextSegment> match = match(documentoSemCategoria, "Doc Sem Categoria", "intro", "Trecho", 0.9);
+        when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
+                .thenReturn(new EmbeddingSearchResult<>(List.of(match)));
+
+        List<ResultadoBuscaDTO> resultados = pesquisaService.buscar("consulta");
+
+        assertThat(resultados).hasSize(1);
+    }
+
     private DocumentoEntity documentoAtivo(UUID id) {
         DocumentoEntity documento = new DocumentoEntity();
         documento.setId(id);

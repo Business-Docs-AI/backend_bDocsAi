@@ -11,6 +11,7 @@ import br.com.example.senac.businessDocsAi.document.entity.DocumentoVersaoEntity
 import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
+import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoAreaParticipanteRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
@@ -122,6 +123,11 @@ class DocumentoServiceComEstruturaTest {
         verify(documentoAreaParticipanteRepository).save(argThat(
                 (DocumentoAreaParticipanteEntity a) -> a.getCategoriaId().equals(3L)
         ));
+
+        // Etapa 17/B4 (verificação V4, gatilho 3 — confirmação de rascunho estruturado):
+        // DocumentoEstruturadoAplicadorService.aplicar() chama criarComEstrutura, que
+        // precisa disparar a reindexação (categoria/tipo/status no chunk).
+        verify(eventPublisher).publishEvent(any(DocumentoAlteradoEvent.class));
     }
 
     @Test
@@ -156,6 +162,14 @@ class DocumentoServiceComEstruturaTest {
         verify(documentoVersaoRepository).save(argThat(
                 (DocumentoVersaoEntity v) -> "{\"objetivo\":\"novo\"}".equals(v.getConteudoEstruturado())
         ));
+
+        // Etapa 17/B4 (verificação V4, gatilho 3 — confirmação de rascunho estruturado):
+        // DocumentoEstruturadoAplicadorService.aplicar() chama atualizarComEstrutura, que
+        // precisa disparar a reindexação (categoria/tipo/status no chunk).
+        ArgumentCaptor<DocumentoAlteradoEvent> eventoCaptor = ArgumentCaptor.forClass(DocumentoAlteradoEvent.class);
+        verify(eventPublisher).publishEvent(eventoCaptor.capture());
+        assertThat(eventoCaptor.getValue().documentoId()).isEqualTo(documentoId);
+        assertThat(eventoCaptor.getValue().versao()).isEqualTo(2);
     }
 
     @Test

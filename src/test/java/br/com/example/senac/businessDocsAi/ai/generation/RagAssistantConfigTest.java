@@ -133,6 +133,52 @@ class RagAssistantConfigTest {
         assertThat(conteudos).hasSize(1);
     }
 
+    // --- V2 (verificação pós-Etapa-16): visibilidade do documento SEM categoria não muda
+    // com o pré-filtro ligado. Nota: aqui o teste é sobre o filtro PÓS-busca (categoria),
+    // já que documentoContentRetrieverBruto (pré-filtro) nunca usa categoria_id — provado
+    // em naoAplicaFiltroNenhumQuandoRagCicloVidaFiltroServiceDevolveVazio/
+    // aplicaOPreFiltroQuandoRagCicloVidaFiltroServiceDevolveUm, que já cobrem o pré-filtro
+    // isoladamente. ---
+
+    @Test
+    void documentoSemCategoriaContinuaInvisivelParaNaoAdmin() {
+        UUID documentoSemCategoria = UUID.randomUUID();
+        DocumentoEntity semCategoria = documento(documentoSemCategoria, StatusCicloVida.VIGENTE);
+        semCategoria.setCategoriaId(null);
+        when(documentoRepository.findById(documentoSemCategoria)).thenReturn(Optional.of(semCategoria));
+        when(categoriaAccessService.isAdmin()).thenReturn(false);
+        when(categoriaAccessService.podeAcessarCategoria(null)).thenReturn(false);
+
+        ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoSemCategoria);
+        ContentRetriever retriever = config.documentoContentRetriever(bruto, documentoRepository, categoriaAccessService);
+
+        List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
+
+        assertThat(conteudos).isEmpty();
+    }
+
+    // Nota (achado, fora do escopo do V2 original): ADMIN em RagAssistantConfig pula
+    // acessivelPelaCategoria por inteiro (branch isAdmin() separado) — nunca chega a checar
+    // isVigente() nem categoria para admin. Resultado prático aqui é o mesmo de antes da
+    // Etapa 16 (admin sempre via tudo), mas é diferente de PesquisaService (que aplica
+    // isVigente() mesmo pra admin, só pula a checagem de categoria). Documentado, não
+    // corrigido — decisão de produto, não bug óbvio.
+    @Test
+    void documentoSemCategoriaContinuaVisivelParaAdmin() {
+        UUID documentoSemCategoria = UUID.randomUUID();
+        DocumentoEntity semCategoria = documento(documentoSemCategoria, StatusCicloVida.VIGENTE);
+        semCategoria.setCategoriaId(null);
+        lenient().when(documentoRepository.findById(documentoSemCategoria)).thenReturn(Optional.of(semCategoria));
+        when(categoriaAccessService.isAdmin()).thenReturn(true);
+
+        ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoSemCategoria);
+        ContentRetriever retriever = config.documentoContentRetriever(bruto, documentoRepository, categoriaAccessService);
+
+        List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
+
+        assertThat(conteudos).hasSize(1);
+    }
+
     private ContentRetriever contentRetrieverBrutoComUmResultado(UUID documentoId) {
         Metadata metadata = new Metadata().put("documento_id", documentoId).put("titulo", "Doc").put("secao", "intro");
         TextSegment segmento = TextSegment.from("texto", metadata);

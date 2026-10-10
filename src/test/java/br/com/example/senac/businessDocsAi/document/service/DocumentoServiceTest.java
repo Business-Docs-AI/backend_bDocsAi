@@ -424,12 +424,38 @@ class DocumentoServiceTest {
         assertThat(captor.getValue().getConteudoEstruturado()).isNull();
     }
 
+    // Etapa 18 (achado na verificação V4): proximaRevisao precisa ser recalculada numa nova
+    // versão de conteúdo, mesmo pelo fluxo LEGADO (sem bloco de metadados — só
+    // aplicarNovaVersao roda, nunca aplicarMetadadosEstruturados). periodicidadeRevisaoMeses
+    // já definido antes continua valendo (o legado não o altera), só a data é recalculada a
+    // partir de hoje.
+    @Test
+    void atualizarPeloFluxoLegadoComMudancaDeConteudoRecalculaProximaRevisao() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity existente = documentoExistente(id, 1, "hash-antigo-arbitrario");
+        existente.setPeriodicidadeRevisaoMeses(6);
+        existente.setProximaRevisao(LocalDate.now().minusDays(100)); // valor antigo, já vencido
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+
+        DocumentoRequestDTO dto = new DocumentoRequestDTO("Novo Título", "<p>Novo conteúdo</p>", "ajuste", 1L);
+
+        documentoService.atualizar(id, dto);
+
+        assertThat(existente.getProximaRevisao()).isEqualTo(LocalDate.now().plusMonths(6));
+    }
+
     // (P3) Atualizar pelo fluxo legado SEM mudança de conteúdo (mesmo hash — só categoria/
     // metadado) é um caminho totalmente diferente: nunca passa por aplicarNovaVersao (que é
     // quem nulifica o estruturado), então um conteúdo estruturado já existente precisa
     // continuar intacto, e nenhuma versão nova pode ser criada.
+    //
+    // Etapa 17/B4 (achado na verificação V4, 2026-10-10): categoria é metadado do chunk
+    // (Etapa 14) — mudar só a categoria precisa disparar reindexação (categoria_id do chunk
+    // fica dessincronizado senão), mesmo sem versionar. Esta asserção substitui a antiga
+    // `verify(eventPublisher, never())...`, que documentava o gap.
     @Test
-    void atualizarSemMudarOConteudoPreservaOConteudoEstruturadoExistenteENaoVersiona() {
+    void atualizarSoACategoriaSemMudarOConteudoPreservaOEstruturadoNaoVersionaEDisparaReindexacao() {
         UUID id = UUID.randomUUID();
         String titulo = "Título Estável";
         String html = "<p>Conteúdo estável</p>";
@@ -451,6 +477,31 @@ class DocumentoServiceTest {
         assertThat(existente.getVersaoSchema()).isEqualTo("v1");
         assertThat(existente.getCategoriaId()).isEqualTo(2L);
         assertThat(existente.getVersaoAtual()).isEqualTo(1);
+        verify(documentoVersaoRepository, never()).save(any());
+
+        ArgumentCaptor<DocumentoAlteradoEvent> captor = ArgumentCaptor.forClass(DocumentoAlteradoEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().documentoId()).isEqualTo(id);
+        assertThat(captor.getValue().versao()).isEqualTo(1); // mesma versão — não houve nova versão de conteúdo
+    }
+
+    // Contraponto: nem categoria nem conteúdo mudaram — nada a reindexar, nenhum evento.
+    @Test
+    void atualizarSemMudarCategoriaNemConteudoNaoDisparaReindexacao() {
+        UUID id = UUID.randomUUID();
+        String titulo = "Título Estável";
+        String html = "<p>Conteúdo estável</p>";
+        String hashAtual = sha256(titulo, html);
+
+        DocumentoEntity existente = documentoExistente(id, 1, hashAtual);
+        existente.setCategoriaId(1L);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+
+        DocumentoRequestDTO dto = new DocumentoRequestDTO(titulo, html, null, 1L);
+
+        documentoService.atualizar(id, dto);
+
         verify(documentoVersaoRepository, never()).save(any());
         verify(eventPublisher, never()).publishEvent(any());
     }

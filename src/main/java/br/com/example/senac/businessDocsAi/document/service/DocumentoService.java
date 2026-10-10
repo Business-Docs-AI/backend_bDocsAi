@@ -106,10 +106,21 @@ public class DocumentoService {
         String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
         String novoHash = calcularHash(dto.titulo(), htmlSanitizado);
 
+        Long categoriaAnterior = documento.getCategoriaId();
         documento.setCategoriaId(dto.categoriaId());
 
         if (novoHash.equals(documento.getHashConteudo())) {
             documentoRepository.save(documento);
+
+            // Etapa 17/B4 (achado na verificação V4): categoria é metadado do chunk (Etapa
+            // 14) — mudar SÓ a categoria (conteúdo idêntico, early return) atualizava a
+            // coluna no banco mas nunca disparava reindexação, deixando o metadado do chunk
+            // dessincronizado. Dispara com a MESMA versaoAtual (não houve nova versão de
+            // conteúdo) só quando a categoria de fato mudou — nunca à toa.
+            if (!Objects.equals(categoriaAnterior, dto.categoriaId())) {
+                eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
+            }
+
             return toResponseDTO(documento);
         }
 
@@ -483,6 +494,15 @@ public class DocumentoService {
         documento.setAtualizadoEm(LocalDateTime.now());
         documento.setConteudoEstruturado(conteudoEstruturado);
         documento.setVersaoSchema(versaoSchema);
+
+        // Etapa 18 (achado na verificação V4): proximaRevisao precisa ser recalculada em
+        // TODA nova versão de conteúdo (atualizar() legado, atualizarComEstrutura,
+        // restaurarVersao), não só quando aplicarMetadadosEstruturados roda — senão uma
+        // atualização de conteúdo pelo fluxo legado (sem bloco de metadados) nunca
+        // atualizava proximaRevisao, mesmo com periodicidadeRevisaoMeses já definida.
+        // Redundante-mas-inofensivo pra atualizarComEstrutura (que já recalcula em
+        // aplicarMetadadosEstruturados, chamado antes desta — mesmo resultado determinístico).
+        documento.setProximaRevisao(calcularProximaRevisao(documento));
 
         documentoRepository.save(documento);
 
