@@ -325,6 +325,14 @@ public class DocumentoService {
         documento.setAtualizadoEm(LocalDateTime.now());
         documentoRepository.save(documento);
 
+        // Etapa 17 (B4, decisão 7): status_ciclo_vida é metadado do CHUNK (Etapa 14) e do
+        // pré-filtro do RAG (Etapa 16) — essa troca não versiona o documento (decisão
+        // original do endpoint, Etapa 5), mas precisa reindexar pra sincronizar o metadado
+        // nos chunks já existentes. Sempre ligado (B4) — não atrás de nenhuma flag de RAG.
+        // Mesma versaoAtual de sempre: IndexacaoService.indexar() só confere que ainda é a
+        // vigente, nunca exige que tenha mudado.
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
+
         return toResponseDTO(documento);
     }
 

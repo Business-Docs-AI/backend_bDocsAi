@@ -309,7 +309,26 @@ class DocumentoServiceTest {
         assertThat(existente.getAtualizadoEm()).isNotNull();
         assertThat(existente.getVersaoAtual()).isEqualTo(1);
         verify(documentoVersaoRepository, never()).save(any());
-        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    // Etapa 17 (B4): status_ciclo_vida é metadado do chunk (Etapa 14)/pré-filtro do RAG
+    // (Etapa 16) — a troca não versiona o documento, mas precisa disparar a reindexação pra
+    // sincronizar o metadado nos chunks já existentes (sempre ligado, não atrás de flag).
+    @Test
+    void atualizarStatusCicloVidaDisparaReindexacaoMesmoSemVersionar() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity existente = documentoExistente(id, 3, "hash-qualquer");
+        existente.setStatusCicloVida(StatusCicloVida.VIGENTE);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(existente));
+        when(currentUserProvider.getCurrentUserName()).thenReturn("Admin Teste");
+
+        documentoService.atualizarStatusCicloVida(id, StatusCicloVida.OBSOLETO);
+
+        ArgumentCaptor<DocumentoAlteradoEvent> captor = ArgumentCaptor.forClass(DocumentoAlteradoEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().documentoId()).isEqualTo(id);
+        assertThat(captor.getValue().versao()).isEqualTo(3);
     }
 
     // (a) Fluxo legado sem estruturado grava documento e versão idênticos a antes.

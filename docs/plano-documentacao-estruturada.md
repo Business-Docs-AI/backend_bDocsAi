@@ -1648,3 +1648,25 @@ de só manter o filtro pós-busca).
   /status 403 pra não-ADMIN, 200 pra ADMIN); `DocumentoServiceComEstruturaTest`/
   outros: sem mudança — `isVigente()` é aditivo, não quebra nada existente).
 - Suíte completa: 276/276 passando, 0 falhas, 0 erros (era 259).
+
+### Etapa 17 — Reindexação automática em mudança de metadado (2026-10-10)
+
+Gap único identificado (já estava documentado no código, Etapa 5):
+`DocumentoService.atualizarStatusCicloVida` (endpoint ADMIN) troca
+`status_ciclo_vida` SEM versionar o documento — de propósito, decisão
+original — mas também nunca publicava `DocumentoAlteradoEvent`, então o
+`IndexacaoListener` nunca reindexava; os chunks já indexados ficavam com
+o `status_ciclo_vida` antigo no metadado (Etapa 14/pré-filtro da Etapa
+16 dessincronizados do banco). Outros caminhos que mudam metadado
+(categoria, tipo, confidencialidade — sempre via `atualizar()`/
+`atualizarComEstrutura()`/criação) já versionam e já reindexam por
+conta da Etapa 7+ — não precisaram de nenhuma mudança.
+
+- **Correção**: `atualizarStatusCicloVida` agora publica
+  `DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual())`
+  — mesma versão de sempre (não incrementa), só sinaliza pro
+  `IndexacaoListener` reindexar. Sempre ligado (B4), sem flag de RAG.
+- Teste novo: `atualizarStatusCicloVidaDisparaReindexacaoMesmoSemVersionar`
+  (substituiu o antigo `verify(eventPublisher, never())...` que
+  documentava o gap).
+- Suíte completa: 277/277 passando, 0 falhas, 0 erros (era 276).
