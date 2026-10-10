@@ -112,6 +112,15 @@ public class DocumentoEntity {
     @Column(name = "processo_pai_id")
     private UUID processoPaiId;
 
+    // Etapa 16: regra "vigente por padrão" (decisão 7/C4) — null (nunca classificado, ou
+    // criado por um caminho que não seta o campo explicitamente) conta como VIGENTE, nunca
+    // exclui o documento do RAG/busca por causa disso. Usado tanto no pré-filtro (via o
+    // valor EFETIVO gravado no chunk pela IndexacaoService) quanto no filtro pós-busca
+    // (direto nesta entidade, fonte da verdade).
+    public boolean isVigente() {
+        return statusCicloVida == null || statusCicloVida == StatusCicloVida.VIGENTE;
+    }
+
     // Conteúdo estruturado (JSON), versionável junto com conteudo_html (migration V12) — ver
     // decisão B3: guarda SÓ conteúdo (objetivo/escopo/fluxo/regras...), NUNCA metadado (os
     // metadados são as colunas acima). NULL sempre que o documento foi criado/atualizado só

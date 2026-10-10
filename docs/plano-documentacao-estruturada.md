@@ -1586,3 +1586,65 @@ massa local autorizada, zero custo de API real.
   USUARIO/EDITOR 403, ADMIN 202; `ReindexacaoEmMassaControllerDesligadoPorDefaultTest`:
   rota não existe com a flag desligada).
 - Suíte completa: 259/259 passando, 0 falhas, 0 erros (era 252).
+
+### Etapa 16 — Filtro pré-busca no RAG (2026-10-10)
+
+**B5 resolvido** — confirmado via bytecode do `langchain4j-core` 1.18.0
+(`filter/comparison/` + `filter/logical/`): só existem `IsEqualTo`/
+`IsNotEqualTo`/`IsGreaterThan(OrEqualTo)`/`IsLessThan(OrEqualTo)`/`IsIn`/
+`IsNotIn`/`ContainsString` + `And`/`Or`/`Not`. **Sem `IsNull`/`IsNotNull`**
+— não dá pra expressar "`status_ciclo_vida = 'VIGENTE' OR status_ciclo_vida
+IS NULL`" diretamente. Decisão do usuário (parou antes de codar, como
+pedido): valor sempre gravado + proteção automática (não a alternativa
+de só manter o filtro pós-busca).
+
+- **Valor sempre gravado (requisito 1)**: `IndexacaoService` agora grava
+  `status_ciclo_vida` SEMPRE (nunca omite a chave) — `VIGENTE` quando o
+  documento não tem status real (`DocumentoEntity.isVigente()`, novo —
+  `null` conta como `VIGENTE`, "vigente por padrão", decisão 7/C4).
+  `categoria_id` já era sempre gravado desde a Etapa 14 (`NOT NULL` em
+  `documento`). Os outros 3 metadados (tipo/macroprocesso/confidencialidade)
+  continuam opcionais — não entram no pré-filtro.
+- **Proteção automática (requisito 2)** — `RagCicloVidaFiltroService`
+  (`ai/retrieval`, novo): antes de aplicar o pré-filtro, verifica (SQL
+  direto, `SELECT count(*) FROM documento_embedding WHERE status_ciclo_vida
+  IS NULL OR categoria_id IS NULL`, cache em memória com TTL configurável
+  — `bdocs.rag.filtros-ciclo-vida.cache-ttl-minutos`, default 5min) se
+  existe QUALQUER chunk órfão (indexado antes da Etapa 14). Se existir:
+  pré-filtro NÃO aplicado (busca funciona como hoje) + `WARN` no log com
+  a contagem e a instrução de rodar `POST /admin/reindexacao`. Se não
+  existir E a flag `bdocs.rag.filtros-ciclo-vida.enabled` (novo, default
+  `false`) estiver ligada: pré-filtro aplicado
+  (`IsEqualTo("status_ciclo_vida", "VIGENTE")`). Usado nos dois lugares
+  (requisito obrigatório): `PesquisaService` (`EmbeddingSearchRequest.filter`)
+  e `RagAssistantConfig` (`EmbeddingStoreContentRetriever.dynamicFilter`
+  — não `filter()` estático, porque a decisão depende do estado ATUAL do
+  banco, reavaliada a cada busca).
+- **Filtro pós-busca confere o BANCO, não o chunk (requisito 3)**:
+  `PesquisaService.documentoAcessivel` e
+  `RagAssistantConfig.acessivelPelaCategoria` ganham
+  `.filter(DocumentoEntity::isVigente)` — a mesma regra "vigente por
+  padrão", mas lida da entidade `documento` (fonte da verdade), nunca do
+  metadado do chunk (que pode estar desatualizado/incompleto).
+- **Visibilidade ADMIN (requisito opcional 4, aceito)**: `GET
+  /admin/reindexacao/status` devolve `chunksSemMetadado` e
+  `preFiltroCicloVidaAtivo` — pra saber quando a reindexação em massa já
+  corrigiu todos os chunks órfãos (sujeito ao mesmo cache/TTL).
+- **Teste mandatório** (resultados idênticos com a flag ligada/desligada
+  quando há chunk legado sem metadado) — provado em 2 camadas:
+  `RagCicloVidaFiltroServiceTest.comMetadadosIncompletosNuncaAplicaOPreFiltroIndependenteDaFlag`
+  (o serviço devolve `Optional.empty()` nos dois estados da flag quando
+  a contagem de chunks órfãos é > 0); `PesquisaServiceTest`/
+  `RagAssistantConfigTest.naoAplicaFiltroNenhumQuandoRagCicloVidaFiltroServiceDevolveVazio`
+  (recebendo `empty()`, nenhum dos dois pontos de leitura anexa filtro
+  algum à busca — comportamento idêntico ao de antes da Etapa 16).
+- Testes novos: 17 (`RagCicloVidaFiltroServiceTest`: 6, incluindo cache
+  TTL respeitado/expirado; `PesquisaServiceTest`: +4 — OBSOLETO excluído,
+  sem status continua aparecendo, filtro aplicado quando presente, nenhum
+  filtro quando ausente; `RagAssistantConfigTest`: 4, novo arquivo, mesmos
+  casos de `PesquisaServiceTest` mas pro bean de retrieval do chat;
+  `IndexacaoServiceTest`: +1 (status real ≠ VIGENTE gravado como está, não
+  sobrescrito); `ReindexacaoEmMassaControllerSecurityTest`: +2 (GET
+  /status 403 pra não-ADMIN, 200 pra ADMIN); `DocumentoServiceComEstruturaTest`/
+  outros: sem mudança — `isVigente()` é aditivo, não quebra nada existente).
+- Suíte completa: 276/276 passando, 0 falhas, 0 erros (era 259).

@@ -87,3 +87,18 @@ bdocs:
       # Atraso do modo modelo-fake antes de devolver o documento de exemplo — só pra UI ter
       # o estado GERANDO pra mostrar; não simula a latência real da Anthropic.
       modelo-fake-atraso-ms: ${DOCUMENTACAO_ESTRUTURADA_GERACAO_MODELO_FAKE_ATRASO_MS:5000}
+  rag:
+    filtros-ciclo-vida:
+      # Etapa 16 — decisão B4: a GRAVAÇÃO dos metadados no chunk (Etapa 14) e os gatilhos de
+      # reindexação por metadado (Etapa 17) ficam sempre ligados, independente desta flag;
+      # só a LEITURA/filtro na busca (pré-filtro + checagem de status no filtro pós-busca)
+      # fica atrás dela. Default false: com ela desligada, RagAssistantConfig e
+      # PesquisaService se comportam exatamente como antes da Etapa 16.
+      enabled: ${RAG_FILTROS_CICLO_VIDA_ENABLED:false}
+      # B5: proteção automática — se existir QUALQUER chunk em documento_embedding sem
+      # status_ciclo_vida/categoria_id (nunca reindexado desde a Etapa 14), o pré-filtro
+      # fica desligado (mesmo com a flag true) até a reindexação em massa (Etapa 15) ser
+      # rodada — nunca excluir um documento do RAG por falta de metadado. Cache em memória
+      # pra não bater no banco a cada busca; TTL curto o bastante pra refletir uma
+      # reindexação em massa recém-concluída em tempo razoável.
+      cache-ttl-minutos: ${RAG_FILTROS_CICLO_VIDA_CACHE_TTL_MINUTOS:5}

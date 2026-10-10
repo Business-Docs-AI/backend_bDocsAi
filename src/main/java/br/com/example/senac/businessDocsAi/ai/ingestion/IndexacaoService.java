@@ -1,6 +1,7 @@
 package br.com.example.senac.businessDocsAi.ai.ingestion;
 
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
@@ -124,17 +125,19 @@ public class IndexacaoService {
                         .put("titulo", documento.getTitulo())
                         .put("secao", secao.ancora());
 
-                // Etapa 14: metadados pré-filtro do RAG (Etapa 16) — categoria_id é sempre
-                // conhecido (documento sempre tem categoria); os demais são nullable em
-                // DocumentoEntity (documento legado/NAO_CLASSIFICADO) e só são gravados
-                // quando presentes — chunk sem o metadado é tratado como VIGENTE/sem
-                // restrição na leitura (Etapa 16), nunca some do RAG por causa disso.
+                // Etapa 14/16: categoria_id e status_ciclo_vida são SEMPRE gravados (nunca
+                // omitidos) — são os 2 metadados que o pré-filtro da Etapa 16 usa; o
+                // langchain4j 1.18.0 não tem filtro IS NULL (B5), então "ausente" não é uma
+                // opção segura para eles. status_ciclo_vida ausente no documento (legado/
+                // NAO_CLASSIFICADO) grava o valor EFETIVO "VIGENTE" (regra "vigente por
+                // padrão" — decisão 7/C4), nunca omite a chave. Os outros 3 metadados
+                // continuam opcionais (omitidos quando ausentes) — não entram no pré-filtro.
                 metadata.put("categoria_id", documento.getCategoriaId());
+                metadata.put("status_ciclo_vida", documento.isVigente()
+                        ? StatusCicloVida.VIGENTE.name()
+                        : documento.getStatusCicloVida().name());
                 if (temTipoReal) {
                     metadata.put("tipo_documento", documento.getTipoDocumento().name());
-                }
-                if (documento.getStatusCicloVida() != null) {
-                    metadata.put("status_ciclo_vida", documento.getStatusCicloVida().name());
                 }
                 if (documento.getMacroprocessoId() != null) {
                     metadata.put("macroprocesso_id", documento.getMacroprocessoId());

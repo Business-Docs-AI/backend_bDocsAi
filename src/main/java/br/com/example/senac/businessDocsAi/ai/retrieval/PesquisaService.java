@@ -3,6 +3,7 @@ package br.com.example.senac.businessDocsAi.ai.retrieval;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
 import br.com.example.senac.businessDocsAi.document.dto.ResultadoBuscaDTO;
 import br.com.example.senac.businessDocsAi.document.dto.TrechoDTO;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -39,19 +40,22 @@ public class PesquisaService {
     private final PgVectorEmbeddingStore embeddingStore;
     private final IDocumentoRepository documentoRepository;
     private final CategoriaAccessService categoriaAccessService;
+    private final RagCicloVidaFiltroService ragCicloVidaFiltroService;
 
     @PreAuthorize("isAuthenticated()")
     public List<ResultadoBuscaDTO> buscar(String query) {
 
         Embedding embeddingConsulta = embeddingModel.embed(query).content();
 
-        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+        EmbeddingSearchRequest.EmbeddingSearchRequestBuilder requestBuilder = EmbeddingSearchRequest.builder()
                 .queryEmbedding(embeddingConsulta)
                 .maxResults(MAX_RESULTADOS_BRUTOS)
-                .minScore(SCORE_MINIMO)
-                .build();
+                .minScore(SCORE_MINIMO);
 
-        EmbeddingSearchResult<TextSegment> resultado = embeddingStore.search(request);
+        // Etapa 16 (C4): mesma regra "vigente por padrão" do RagAssistantConfig, também aqui.
+        ragCicloVidaFiltroService.filtroStatusVigente().ifPresent(requestBuilder::filter);
+
+        EmbeddingSearchResult<TextSegment> resultado = embeddingStore.search(requestBuilder.build());
 
         return agrupar(resultado.matches());
     }
@@ -105,6 +109,10 @@ public class PesquisaService {
     private boolean documentoAcessivel(UUID documentoId) {
         return documentoRepository.findById(documentoId)
                 .filter(documento -> !documento.isDeletado())
+                // Etapa 16 (C4): confere o status NO BANCO (fonte da verdade), nunca no
+                // metadado do chunk — um chunk com metadado desatualizado nunca pode trazer
+                // um documento OBSOLETO (ou qualquer status != VIGENTE) de volta pra busca.
+                .filter(DocumentoEntity::isVigente)
                 .map(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
                 .orElse(false);
     }

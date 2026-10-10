@@ -1,9 +1,11 @@
 package br.com.example.senac.businessDocsAi.ai.generation;
 
 import br.com.example.senac.businessDocsAi.ai.prompt.RagSystemPrompt;
+import br.com.example.senac.businessDocsAi.ai.retrieval.RagCicloVidaFiltroService;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
 import br.com.example.senac.businessDocsAi.categories.tool.CategoriaTools;
 import br.com.example.senac.businessDocsAi.config.FeatureFlags;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.tool.DocumentoEstruturadoTools;
 import br.com.example.senac.businessDocsAi.document.tool.DocumentoTools;
@@ -50,13 +52,19 @@ public class RagAssistantConfig {
     @Bean
     public ContentRetriever documentoContentRetrieverBruto(
             PgVectorEmbeddingStore embeddingStore,
-            EmbeddingModel embeddingModel
+            EmbeddingModel embeddingModel,
+            RagCicloVidaFiltroService ragCicloVidaFiltroService
     ) {
         return EmbeddingStoreContentRetriever.builder()
                 .embeddingStore(embeddingStore)
                 .embeddingModel(embeddingModel)
                 .maxResults(MAX_TRECHOS_BRUTOS)
                 .minScore(SCORE_MINIMO_RECUPERACAO)
+                // Etapa 16: dynamicFilter (não filter() estático) porque a decisão de
+                // aplicar o pré-filtro depende do estado ATUAL do banco (flag + metadados
+                // completos, com cache de poucos minutos) — reavaliado a cada busca, nunca
+                // fixado na criação do bean.
+                .dynamicFilter(query -> ragCicloVidaFiltroService.filtroStatusVigente().orElse(null))
                 .build();
     }
 
@@ -94,6 +102,9 @@ public class RagAssistantConfig {
 
         return documentoRepository.findById(documentoId)
                 .filter(documento -> !documento.isDeletado())
+                // Etapa 16 (C4): confere o status NO BANCO (fonte da verdade), nunca no
+                // metadado do chunk — mesma regra de PesquisaService.documentoAcessivel.
+                .filter(DocumentoEntity::isVigente)
                 .map(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
                 .orElse(false);
     }

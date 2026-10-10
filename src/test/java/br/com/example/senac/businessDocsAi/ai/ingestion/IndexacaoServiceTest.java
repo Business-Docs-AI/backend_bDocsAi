@@ -155,11 +155,12 @@ class IndexacaoServiceTest {
     }
 
     // Documento legado (migrado antes da Etapa 2, nunca classificado) — os metadados
-    // opcionais ficam de fora do chunk, mas a indexação continua funcionando normalmente;
-    // é a Etapa 16 (leitura/filtro) que trata a AUSÊNCIA desses metadados como "não exclui
-    // do RAG", não esta etapa (que só grava o que existe).
+    // REALMENTE opcionais (tipo/macroprocesso/confidencialidade) ficam de fora do chunk.
+    // status_ciclo_vida e categoria_id NUNCA ficam de fora (Etapa 16/B5: langchain4j não
+    // tem filtro IS NULL, então status_ciclo_vida grava sempre um valor EFETIVO — VIGENTE
+    // quando o documento não tem status real, "vigente por padrão", decisão 7/C4).
     @Test
-    void naoGravaOsMetadadosOpcionaisQuandoODocumentoNaoTemClassificacao() {
+    void naoGravaOsMetadadosOpcionaisMasSempreGravaStatusCicloVidaECategoria() {
         UUID id = UUID.randomUUID();
         DocumentoEntity documento = documentoComVersao(id, 1);
         documento.setCategoriaId(7L);
@@ -183,11 +184,36 @@ class IndexacaoServiceTest {
         TextSegment segmento = segmentosCaptor.getValue().get(0);
         assertThat(segmento.metadata().getLong("categoria_id")).isEqualTo(7L);
         assertThat(segmento.metadata().getString("tipo_documento")).isNull();
-        assertThat(segmento.metadata().getString("status_ciclo_vida")).isNull();
+        assertThat(segmento.metadata().getString("status_ciclo_vida")).isEqualTo("VIGENTE");
         assertThat(segmento.metadata().getLong("macroprocesso_id")).isNull();
         assertThat(segmento.metadata().getString("confidencialidade")).isNull();
         // NAO_CLASSIFICADO não entra no prefixo do texto (rótulo vazio não ajuda ninguém).
         assertThat(segmento.text()).startsWith("Documento de Teste >");
+    }
+
+    // Um status REAL e diferente de VIGENTE (ex.: OBSOLETO) é gravado como está — o default
+    // "VIGENTE" só vale quando o documento não tem status definido (null), nunca sobrescreve
+    // um status real.
+    @Test
+    void gravaOStatusCicloVidaRealQuandoDiferenteDeVigente() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity documento = documentoComVersao(id, 1);
+        documento.setStatusCicloVida(StatusCicloVida.OBSOLETO);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(documento));
+        when(htmlSectionSplitter.dividir(anyString(), anyString()))
+                .thenReturn(List.of(new HtmlSectionSplitter.Secao("intro", "Introdução", "Texto de teste")));
+        when(embeddingModel.embedAll(anyList()))
+                .thenReturn(Response.from(List.of(Embedding.from(new float[]{0.1f, 0.2f}))));
+
+        indexacaoService.indexar(id, 1);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TextSegment>> segmentosCaptor = ArgumentCaptor.forClass(List.class);
+        verify(embeddingStore).addAll(anyList(), anyList(), segmentosCaptor.capture());
+
+        TextSegment segmento = segmentosCaptor.getValue().get(0);
+        assertThat(segmento.metadata().getString("status_ciclo_vida")).isEqualTo("OBSOLETO");
     }
 
     private DocumentoEntity documentoComVersao(UUID id, int versaoAtual) {
