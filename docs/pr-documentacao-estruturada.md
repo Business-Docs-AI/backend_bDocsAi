@@ -1,6 +1,33 @@
 # PR: Documentação Estruturada (pirâmide ISO 9001 / SIPOC / RACI / APQC)
 
-Branch: `feature/documentacao-estruturada` → `main`.
+Branch: `feature/documentacao-estruturada` → `feature/melhorias-em-todo-projeto`
+(decisão 2026-10-10 — ver "Base do PR" abaixo). **PR ainda NÃO aberto** —
+só a descrição está preparada aqui.
+
+## Base do PR (decisão 2026-10-10)
+
+A `feature/melhorias-em-todo-projeto` nunca foi totalmente integrada à
+`main` — há uma **PR #10 aberta** (desde 2026-10-02) trazendo toda a
+fundação (auth/JWT, RAG, documentos versionados, chat, categorias) que
+esta branch depende inteiramente. Apontar nossa PR direto pra `main`
+hoje duplicaria essa fundação inteira no diff (216 arquivos/+17828
+linhas, contra 114 arquivos/+10279 linhas apontando pra
+`feature/melhorias-em-todo-projeto`) e pediria ao time pra revisar de
+novo um código já pendente de revisão na PR #10.
+
+**Decisão**: esta PR fica **empilhada sobre a PR #10** — base =
+`feature/melhorias-em-todo-projeto`, não `main`. Depois que a PR #10 for
+aceita e mergeada:
+- Se o merge for por **merge commit** (não squash): só reapontar a base
+  desta PR pra `main` no GitHub — sem rebase, o histórico já é
+  ancestral de `main` nesse ponto.
+- Se o merge for por **squash**: esta branch vai precisar de um
+  `git rebase`/`git merge` novo sobre a `main` pós-squash antes de
+  reapontar a base (os commits da melhorias teriam SHAs diferentes).
+
+Commits novos do time na `feature/melhorias-em-todo-projeto` desde que
+esta branch foi criada: nenhum (confirmado via `git fetch` + `git log`,
+2026-10-10) — sem conflito a resolver nesta sincronização.
 
 ## Resumo da funcionalidade
 
