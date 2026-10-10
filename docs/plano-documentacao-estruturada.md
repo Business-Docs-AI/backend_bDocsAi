@@ -1557,3 +1557,32 @@ e `prepararAtualizacaoDocumento`).
   corrigido para sempre setar `categoriaId` (é NOT NULL no banco de
   verdade — o fixture antigo não precisava disso antes da Etapa 14).
 - Suíte completa: 252/252 passando, 0 falhas, 0 erros (era 250).
+
+### Etapa 15 — Reindexação em massa, ADMIN/manual/assíncrona (2026-10-10)
+
+Checagem pré-etapa (regra de custo): `AI_EMBEDDING_PROVIDER=local`
+(ONNX em processo, sem chave/sem chamada de rede) — reindexação em
+massa local autorizada, zero custo de API real.
+
+- **`ReindexacaoEmMassaService`** (`ai/ingestion`): `reindexarTodos()`
+  (`@Async("reindexacaoEmMassaExecutor")`) varre
+  `findByDeletadoFalseOrderByTituloAsc()` e chama
+  `IndexacaoService.indexar(id, versaoAtual)` documento por documento —
+  reaproveita toda a lógica existente (remove chunks antigos, gera
+  novos, confere versão vigente), nada duplicado. `contarDocumentosAtivos()`
+  pra resposta imediata do endpoint.
+- **`AsyncConfig`**: novo `reindexacaoEmMassaExecutor`, pool PRÓPRIO e
+  pequeno (core=1/max=1) — nunca o `indexacaoExecutor` compartilhado,
+  pra uma reindexação de centenas de documentos não entupir a fila da
+  indexação normal (criar/editar documento) atrás de si.
+- **`ReindexacaoEmMassaController`**: `POST /admin/reindexacao`,
+  `hasRole('ADMIN')`, `@ConditionalOnProperty` da flag (mesmo padrão de
+  `DocumentoStatusCicloVidaController`) — devolve 202 com a contagem de
+  documentos no momento do disparo; o trabalho em si roda em segundo
+  plano.
+- Testes novos: 7 (`ReindexacaoEmMassaServiceTest`: reindexa cada
+  documento com sua própria versão vigente, lista vazia não chama
+  indexação, contagem; `ReindexacaoEmMassaControllerSecurityTest`:
+  USUARIO/EDITOR 403, ADMIN 202; `ReindexacaoEmMassaControllerDesligadoPorDefaultTest`:
+  rota não existe com a flag desligada).
+- Suíte completa: 259/259 passando, 0 falhas, 0 erros (era 252).

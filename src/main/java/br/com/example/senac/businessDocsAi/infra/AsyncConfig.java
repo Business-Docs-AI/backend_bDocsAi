@@ -48,4 +48,19 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    // Etapa 15: pool dedicado e PEQUENO (nunca o indexacaoExecutor compartilhado) — uma
+    // reindexação em massa pode varrer centenas de documentos; rodar num pool próprio evita
+    // que ela entupa a fila da indexação normal (criar/editar um documento) atrás de si, e
+    // limita quantos embeddings locais (CPU-bound, ONNX) rodam em paralelo de uma vez.
+    @Bean(name = "reindexacaoEmMassaExecutor")
+    public Executor reindexacaoEmMassaExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("reindexacao-massa-");
+        executor.initialize();
+        return executor;
+    }
 }
