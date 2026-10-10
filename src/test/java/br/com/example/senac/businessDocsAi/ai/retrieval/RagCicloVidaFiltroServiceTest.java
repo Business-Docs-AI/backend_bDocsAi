@@ -94,4 +94,16 @@ class RagCicloVidaFiltroServiceTest {
 
         verify(jdbcTemplate, times(2)).queryForObject(anyString(), eq(Long.class));
     }
+
+    // Decisão ADMIN/OBSOLETO (2026-10-10): flagHabilitada() é o valor cru — não considera
+    // chunksComMetadadoIncompleto(), ao contrário de filtroStatusVigente() — usado pelo
+    // filtro PÓS-busca, que lê status direto de `documento` (sem risco de chunk órfão).
+    @Test
+    void flagHabilitadaDevolveOValorCru() {
+        RagCicloVidaFiltroService comFlagLigada = new RagCicloVidaFiltroService(jdbcTemplate, true, 5);
+        assertThat(comFlagLigada.flagHabilitada()).isTrue();
+
+        RagCicloVidaFiltroService comFlagDesligada = new RagCicloVidaFiltroService(jdbcTemplate, false, 5);
+        assertThat(comFlagDesligada.flagHabilitada()).isFalse();
+    }
 }

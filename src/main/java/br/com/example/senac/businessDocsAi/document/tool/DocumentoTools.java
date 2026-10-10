@@ -102,6 +102,36 @@ public class DocumentoTools {
         return texto.toString();
     }
 
+    // Decisão ADMIN/OBSOLETO (2026-10-10): com a flag de ciclo de vida do RAG ligada,
+    // buscarDocumentos (acima) passa a esconder documentos não-VIGENTES por padrão, pra
+    // TODOS os papéis (inclusive ADMIN, alinhado com PesquisaService — achado na
+    // verificação V2). Esta tool é o caminho EXPLÍCITO de volta pro histórico completo —
+    // mesma regra de acesso por categoria de sempre, só pula o filtro de status. Com a
+    // flag desligada, idêntica a buscarDocumentos (nada a pular).
+    @Tool("""
+            Busca documentos INCLUINDO os que não estão mais vigentes (em elaboração, em \
+            revisão ou obsoletos) — use só quando o usuário pedir explicitamente por \
+            histórico, versões antigas, ou documentos descontinuados/obsoletos. Para busca \
+            normal, use buscarDocumentos.""")
+    public String buscarDocumentosIncluindoHistorico(@P("texto da busca, em linguagem natural") String consulta) {
+
+        var resultados = pesquisaService.buscar(consulta, true);
+
+        if (resultados.isEmpty()) {
+            return "Nenhum documento encontrado para essa busca (incluindo histórico/não-vigentes).";
+        }
+
+        StringBuilder texto = new StringBuilder();
+        for (ResultadoBuscaDTO resultado : resultados) {
+            texto.append("ID: ").append(resultado.documentoId())
+                    .append(" | Título: ").append(resultado.titulo())
+                    .append(" | Score: ").append(String.format("%.2f", resultado.melhorScore()))
+                    .append("\n");
+        }
+
+        return texto.toString();
+    }
+
     @Tool("""
             Prepara uma PROPOSTA de criação de um documento novo — NÃO cria nada ainda, só \
             grava um rascunho. Chame listarMinhasCategorias antes para saber o ID da \

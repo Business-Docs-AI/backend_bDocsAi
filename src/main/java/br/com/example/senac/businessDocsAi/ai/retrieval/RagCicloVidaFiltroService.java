@@ -68,6 +68,15 @@ public class RagCicloVidaFiltroService {
         return Optional.of(MetadataFilterBuilder.metadataKey("status_ciclo_vida").isEqualTo(StatusCicloVida.VIGENTE.name()));
     }
 
+    /** O valor cru da flag — usado pelo filtro PÓS-busca (lê direto de {@code documento},
+     * nunca do metadado do chunk, então não tem o problema de chunk órfão/B5 que o
+     * pré-filtro tem; não precisa considerar {@link #chunksComMetadadoIncompleto()}). Com a
+     * flag desligada, nem o pré- nem o pós-filtro de ciclo de vida aplicam — "nenhuma
+     * mudança" em relação a antes da Etapa 16, pra qualquer papel (ADMIN incluído). */
+    public boolean flagHabilitada() {
+        return flagHabilitada;
+    }
+
     /** Quantos chunks ainda não têm status_ciclo_vida (nunca reindexados desde a Etapa 14)
      * — exposto também pro endpoint ADMIN de status da reindexação. */
     public long chunksComMetadadoIncompleto() {

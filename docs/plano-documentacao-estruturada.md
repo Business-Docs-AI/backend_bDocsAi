@@ -1792,3 +1792,52 @@ chamada existente pro caminho estruturado.
   (visibilidade sem categoria, ADMIN/não-ADMIN); 2 em
   `RagAssistantConfigTest` (idem)).
 - Suíte completa: 287/287 passando, 0 falhas, 0 erros (era 281).
+
+### Decisão: ADMIN e documentos OBSOLETO (2026-10-10)
+
+Resolve o "achado à parte" do V2 (acima): `RagAssistantConfig` agora
+está alinhado com `PesquisaService` — com `RAG_FILTROS_CICLO_VIDA_ENABLED=true`,
+o ADMIN também só recebe documentos VIGENTES por padrão no chat; o
+acesso irrestrito por CATEGORIA continua igual (ADMIN nunca checa
+categoria, só passou a checar status). Com a flag desligada, nenhuma
+mudança pra nenhum papel — comportamento idêntico a antes da Etapa 16.
+
+**Achado mais profundo durante a implementação**: o filtro pós-busca
+`isVigente()` em AMBOS os serviços (`PesquisaService` e
+`RagAssistantConfig`) estava, na verdade, **incondicional** —
+aplicava mesmo com a flag desligada, pra qualquer papel. Isso
+contradizia a decisão B4 ("só a leitura dos metadados fica atrás de
+filtros-ciclo-vida") e o requisito atual ("com a flag desligada,
+nenhuma mudança"). Corrigido pra TODOS os papéis (não só admin):
+`documentoAcessivel`/`acessivelPelaCategoria` agora só aplicam
+`isVigente()` quando `RagCicloVidaFiltroService.flagHabilitada()` é
+`true`. Novo método `flagHabilitada()` nessa classe expõe o valor cru
+da flag (ao contrário de `filtroStatusVigente()`, não considera
+`chunksComMetadadoIncompleto()` — o filtro pós-busca lê o status
+direto de `documento`, nunca do metadado do chunk, então não tem o
+problema de chunk órfão/B5).
+
+**Histórico continua acessível**: nova tool
+`buscarDocumentosIncluindoHistorico` (delega para
+`PesquisaService.buscar(query, incluirHistorico=true)`, novo overload)
+é o caminho explícito pra ver documentos não-vigentes mesmo com a flag
+ligada — pula o filtro de status por completo, mantendo as regras de
+categoria/deletado de sempre. Com a flag desligada, idêntica à busca
+normal (nada a pular).
+
+- Testes novos/ajustados: `RagAssistantConfigTest` (2 testes novos —
+  admin vê/não vê OBSOLETO conforme a flag; 2 renomeados pra deixar
+  explícito o estado da flag testado; stub de `flagHabilitada()`
+  adicionado aos testes de categoria/sem-status); `PesquisaServiceTest`
+  (2 testes novos — idem pro pós-filtro; teste novo pro overload
+  `incluirHistorico`; stub de `flagHabilitada()` nos testes de
+  categoria sem mudança de comportamento); `DocumentoToolsTest` (2
+  testes novos pra `buscarDocumentosIncluindoHistorico`);
+  `RagCicloVidaFiltroServiceTest` (1 teste novo pra `flagHabilitada()`).
+- Suíte completa: 295/295 passando, 0 falhas, 0 erros (era 287).
+- Verificação ao vivo via REST (padrão V1-V4) não foi possível desta
+  vez: o classificador de permissões do Claude Code bloqueou o `curl`
+  de login (campo de senha tratado como escrita em secret-store).
+  Compensado pela cobertura de teste unitário acima, que já cobre os
+  dois estados da flag nos dois serviços de leitura — exatamente o que
+  foi pedido ("teste para os dois casos").

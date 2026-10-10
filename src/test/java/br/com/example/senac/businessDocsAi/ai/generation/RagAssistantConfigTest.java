@@ -100,33 +100,107 @@ class RagAssistantConfigTest {
     }
 
     @Test
-    void posFiltroDescartaDocumentoObsoletoMesmoComAcessoDeCategoria() {
+    void posFiltroDescartaDocumentoObsoletoMesmoComAcessoDeCategoriaQuandoAFlagEstaLigada() {
         UUID documentoObsoleto = UUID.randomUUID();
         DocumentoEntity obsoleto = documento(documentoObsoleto, StatusCicloVida.OBSOLETO);
         when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
         lenient().when(categoriaAccessService.isAdmin()).thenReturn(false);
         lenient().when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoObsoleto);
-        ContentRetriever retriever = config.documentoContentRetriever(bruto, documentoRepository, categoriaAccessService);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
 
         List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
 
         assertThat(conteudos).isEmpty();
     }
 
-    // "Vigente por padrão" (decisão 7/C4): sem status definido, o documento continua
-    // aparecendo — nunca some do RAG por falta de metadado.
+    // Decisão ADMIN/OBSOLETO (2026-10-10): com a flag DESLIGADA, nenhuma mudança em relação
+    // a antes da Etapa 16 — documento OBSOLETO continua visível (mesmo pra não-admin), já
+    // que o filtro de ciclo de vida inteiro (pré e pós) só existe com a flag ligada.
     @Test
-    void posFiltroMantemDocumentoSemStatusCicloVidaDefinido() {
+    void posFiltroMantemDocumentoObsoletoQuandoAFlagEstaDesligada() {
+        UUID documentoObsoleto = UUID.randomUUID();
+        DocumentoEntity obsoleto = documento(documentoObsoleto, StatusCicloVida.OBSOLETO);
+        when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
+        lenient().when(categoriaAccessService.isAdmin()).thenReturn(false);
+        when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(false);
+
+        ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoObsoleto);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
+
+        List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
+
+        assertThat(conteudos).hasSize(1);
+    }
+
+    // "Vigente por padrão" (decisão 7/C4): sem status definido, o documento continua
+    // aparecendo mesmo com o filtro ativamente aplicado (flag ligada) — nunca some do RAG
+    // por falta de metadado.
+    @Test
+    void posFiltroMantemDocumentoSemStatusCicloVidaDefinidoMesmoComAFlagLigada() {
         UUID documentoLegado = UUID.randomUUID();
         DocumentoEntity legado = documento(documentoLegado, null);
         when(documentoRepository.findById(documentoLegado)).thenReturn(Optional.of(legado));
         lenient().when(categoriaAccessService.isAdmin()).thenReturn(false);
         when(categoriaAccessService.podeAcessarCategoria(any())).thenReturn(true);
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoLegado);
-        ContentRetriever retriever = config.documentoContentRetriever(bruto, documentoRepository, categoriaAccessService);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
+
+        List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
+
+        assertThat(conteudos).hasSize(1);
+    }
+
+    // --- Decisão ADMIN/OBSOLETO (2026-10-10): alinha RagAssistantConfig com PesquisaService
+    // — ADMIN também só vê VIGENTE por padrão quando a flag está ligada; acesso irrestrito
+    // por CATEGORIA continua igual pro admin (nunca checa categoria, só status). ---
+
+    @Test
+    void adminTambemSoVeDocumentosVigentesQuandoAFlagEstaLigada() {
+        UUID documentoObsoleto = UUID.randomUUID();
+        DocumentoEntity obsoleto = documento(documentoObsoleto, StatusCicloVida.OBSOLETO);
+        when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
+        when(categoriaAccessService.isAdmin()).thenReturn(true);
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
+
+        ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoObsoleto);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
+
+        List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
+
+        assertThat(conteudos).isEmpty();
+        // Nunca chama podeAcessarCategoria pro admin — acesso por categoria continua
+        // irrestrito, só o status passou a ser checado.
+        verify(categoriaAccessService, org.mockito.Mockito.never()).podeAcessarCategoria(any());
+    }
+
+    // "Nenhuma mudança" com a flag desligada — admin continua vendo tudo, exatamente como
+    // antes da Etapa 16 (comportamento histórico preservado).
+    @Test
+    void adminVeDocumentosObsoletosQuandoAFlagEstaDesligada() {
+        UUID documentoObsoleto = UUID.randomUUID();
+        DocumentoEntity obsoleto = documento(documentoObsoleto, StatusCicloVida.OBSOLETO);
+        lenient().when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
+        when(categoriaAccessService.isAdmin()).thenReturn(true);
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(false);
+
+        ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoObsoleto);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
 
         List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
 
@@ -148,21 +222,18 @@ class RagAssistantConfigTest {
         when(documentoRepository.findById(documentoSemCategoria)).thenReturn(Optional.of(semCategoria));
         when(categoriaAccessService.isAdmin()).thenReturn(false);
         when(categoriaAccessService.podeAcessarCategoria(null)).thenReturn(false);
+        lenient().when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoSemCategoria);
-        ContentRetriever retriever = config.documentoContentRetriever(bruto, documentoRepository, categoriaAccessService);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
 
         List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
 
         assertThat(conteudos).isEmpty();
     }
 
-    // Nota (achado, fora do escopo do V2 original): ADMIN em RagAssistantConfig pula
-    // acessivelPelaCategoria por inteiro (branch isAdmin() separado) — nunca chega a checar
-    // isVigente() nem categoria para admin. Resultado prático aqui é o mesmo de antes da
-    // Etapa 16 (admin sempre via tudo), mas é diferente de PesquisaService (que aplica
-    // isVigente() mesmo pra admin, só pula a checagem de categoria). Documentado, não
-    // corrigido — decisão de produto, não bug óbvio.
     @Test
     void documentoSemCategoriaContinuaVisivelParaAdmin() {
         UUID documentoSemCategoria = UUID.randomUUID();
@@ -170,9 +241,12 @@ class RagAssistantConfigTest {
         semCategoria.setCategoriaId(null);
         lenient().when(documentoRepository.findById(documentoSemCategoria)).thenReturn(Optional.of(semCategoria));
         when(categoriaAccessService.isAdmin()).thenReturn(true);
+        lenient().when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         ContentRetriever bruto = contentRetrieverBrutoComUmResultado(documentoSemCategoria);
-        ContentRetriever retriever = config.documentoContentRetriever(bruto, documentoRepository, categoriaAccessService);
+        ContentRetriever retriever = config.documentoContentRetriever(
+                bruto, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+        );
 
         List<Content> conteudos = retriever.retrieve(Query.from("consulta"));
 

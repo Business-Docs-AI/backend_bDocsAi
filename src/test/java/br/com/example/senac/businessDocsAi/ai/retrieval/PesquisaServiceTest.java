@@ -121,15 +121,17 @@ class PesquisaServiceTest {
     }
 
     // Etapa 16 (C4): mesma regra "vigente por padrão" do RagAssistantConfig — confere o
-    // status NO BANCO (fonte da verdade), nunca no metadado do chunk.
+    // status NO BANCO (fonte da verdade), nunca no metadado do chunk. Decisão ADMIN/OBSOLETO
+    // (2026-10-10): esse filtro pós-busca só aplica com a flag ligada.
     @Test
-    void deveIgnorarResultadosDeDocumentosObsoletos() {
+    void deveIgnorarResultadosDeDocumentosObsoletosQuandoAFlagEstaLigada() {
         UUID documentoObsoleto = UUID.randomUUID();
 
         DocumentoEntity obsoleto = documentoAtivo(documentoObsoleto);
         obsoleto.setStatusCicloVida(StatusCicloVida.OBSOLETO);
 
         when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         EmbeddingMatch<TextSegment> match = match(documentoObsoleto, "Documento Obsoleto", "intro", "Trecho", 0.9);
         when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
@@ -140,16 +142,39 @@ class PesquisaServiceTest {
         assertThat(resultados).isEmpty();
     }
 
-    // Documento sem status_ciclo_vida definido (legado/NAO_CLASSIFICADO) continua aparecendo
-    // — "vigente por padrão" (decisão 7/C4), nunca some do RAG por falta de metadado.
+    // "Nenhuma mudança" com a flag desligada (decisão ADMIN/OBSOLETO) — documento obsoleto
+    // continua aparecendo, exatamente como antes da Etapa 16.
     @Test
-    void documentoSemStatusCicloVidaDefinidoContinuaAparecendo() {
+    void mantemResultadosDeDocumentosObsoletosQuandoAFlagEstaDesligada() {
+        UUID documentoObsoleto = UUID.randomUUID();
+
+        DocumentoEntity obsoleto = documentoAtivo(documentoObsoleto);
+        obsoleto.setStatusCicloVida(StatusCicloVida.OBSOLETO);
+
+        when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(false);
+
+        EmbeddingMatch<TextSegment> match = match(documentoObsoleto, "Documento Obsoleto", "intro", "Trecho", 0.9);
+        when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
+                .thenReturn(new EmbeddingSearchResult<>(List.of(match)));
+
+        List<ResultadoBuscaDTO> resultados = pesquisaService.buscar("consulta");
+
+        assertThat(resultados).hasSize(1);
+    }
+
+    // Documento sem status_ciclo_vida definido (legado/NAO_CLASSIFICADO) continua aparecendo
+    // — "vigente por padrão" (decisão 7/C4), nunca some do RAG por falta de metadado, mesmo
+    // com o filtro ativamente aplicado (flag ligada).
+    @Test
+    void documentoSemStatusCicloVidaDefinidoContinuaAparecendoMesmoComAFlagLigada() {
         UUID documentoLegado = UUID.randomUUID();
 
         DocumentoEntity legado = documentoAtivo(documentoLegado);
         legado.setStatusCicloVida(null);
 
         when(documentoRepository.findById(documentoLegado)).thenReturn(Optional.of(legado));
+        when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         EmbeddingMatch<TextSegment> match = match(documentoLegado, "Documento Legado", "intro", "Trecho", 0.9);
         when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
@@ -158,6 +183,33 @@ class PesquisaServiceTest {
         List<ResultadoBuscaDTO> resultados = pesquisaService.buscar("consulta");
 
         assertThat(resultados).hasSize(1);
+    }
+
+    // --- Decisão ADMIN/OBSOLETO (2026-10-10): buscar(query, incluirHistorico=true) pula o
+    // filtro de ciclo de vida por completo, mesmo com a flag ligada — usada pela tool
+    // buscarDocumentosIncluindoHistorico. ---
+
+    @Test
+    void comIncluirHistoricoDocumentoObsoletoApareceMesmoComAFlagLigada() {
+        UUID documentoObsoleto = UUID.randomUUID();
+
+        DocumentoEntity obsoleto = documentoAtivo(documentoObsoleto);
+        obsoleto.setStatusCicloVida(StatusCicloVida.OBSOLETO);
+
+        when(documentoRepository.findById(documentoObsoleto)).thenReturn(Optional.of(obsoleto));
+        lenient().when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
+
+        EmbeddingMatch<TextSegment> match = match(documentoObsoleto, "Documento Obsoleto", "intro", "Trecho", 0.9);
+        when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
+                .thenReturn(new EmbeddingSearchResult<>(List.of(match)));
+
+        List<ResultadoBuscaDTO> resultados = pesquisaService.buscar("consulta", true);
+
+        assertThat(resultados).hasSize(1);
+
+        ArgumentCaptor<EmbeddingSearchRequest> captor = ArgumentCaptor.forClass(EmbeddingSearchRequest.class);
+        verify(embeddingStore).search(captor.capture());
+        assertThat(captor.getValue().filter()).isNull();
     }
 
     @Test
@@ -204,6 +256,7 @@ class PesquisaServiceTest {
 
         Filter preFiltro = MetadataFilterBuilder.metadataKey("status_ciclo_vida").isEqualTo("VIGENTE");
         when(ragCicloVidaFiltroService.filtroStatusVigente()).thenReturn(Optional.of(preFiltro));
+        lenient().when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         EmbeddingMatch<TextSegment> match = match(documentoSemCategoria, "Doc Sem Categoria", "intro", "Trecho", 0.9);
         when(embeddingStore.search(any(EmbeddingSearchRequest.class)))
@@ -226,6 +279,7 @@ class PesquisaServiceTest {
 
         Filter preFiltro = MetadataFilterBuilder.metadataKey("status_ciclo_vida").isEqualTo("VIGENTE");
         when(ragCicloVidaFiltroService.filtroStatusVigente()).thenReturn(Optional.of(preFiltro));
+        lenient().when(ragCicloVidaFiltroService.flagHabilitada()).thenReturn(true);
 
         EmbeddingMatch<TextSegment> match = match(documentoSemCategoria, "Doc Sem Categoria", "intro", "Trecho", 0.9);
         when(embeddingStore.search(any(EmbeddingSearchRequest.class)))

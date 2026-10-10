@@ -5,6 +5,7 @@ import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessSer
 import br.com.example.senac.businessDocsAi.categories.service.CategoryService;
 import br.com.example.senac.businessDocsAi.chat.service.ConversaContextHolder;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.dto.ResultadoBuscaDTO;
 import br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.StatusRascunho;
@@ -21,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -388,5 +390,33 @@ class DocumentoToolsTest {
         verify(documentoEstruturadoAplicadorService).aplicar(rascunho);
         verifyNoInteractions(documentoService);
         assertThat(resposta).contains(documentoCriado.id().toString());
+    }
+
+    // Decisão ADMIN/OBSOLETO (2026-10-10): buscarDocumentosIncluindoHistorico é o caminho
+    // explícito de volta pro histórico completo — delega para pesquisaService.buscar com
+    // incluirHistorico=true, nunca para o overload de 1 argumento (que esconde não-vigentes
+    // com a flag ligada).
+    @Test
+    void buscarDocumentosIncluindoHistoricoDelegaParaPesquisaServiceComIncluirHistorico() {
+        UUID documentoId = UUID.randomUUID();
+        ResultadoBuscaDTO resultado = new ResultadoBuscaDTO(documentoId, "Documento Obsoleto", 0.87, List.of());
+        when(pesquisaService.buscar("política antiga", true)).thenReturn(List.of(resultado));
+
+        String resposta = documentoTools.buscarDocumentosIncluindoHistorico("política antiga");
+
+        verify(pesquisaService).buscar("política antiga", true);
+        verify(pesquisaService, never()).buscar("política antiga");
+        assertThat(resposta).contains(documentoId.toString());
+        assertThat(resposta).contains("Documento Obsoleto");
+        assertThat(resposta).contains(String.format("%.2f", 0.87));
+    }
+
+    @Test
+    void buscarDocumentosIncluindoHistoricoSemResultadosAvisaOQueFoiBuscado() {
+        when(pesquisaService.buscar("nada disso existe", true)).thenReturn(List.of());
+
+        String resposta = documentoTools.buscarDocumentosIncluindoHistorico("nada disso existe");
+
+        assertThat(resposta).containsIgnoringCase("nenhum documento encontrado");
     }
 }

@@ -69,31 +69,47 @@ public class RagAssistantConfig {
     }
 
     // Filtra o que o retriever bruto devolve pelas categorias que o usuário autenticado NO
-    // MOMENTO DA PERGUNTA pode acessar (ADMIN não tem restrição). Sem isso, o RAG vazaria
-    // trechos de documentos de categorias que o usuário não deveria ver.
+    // MOMENTO DA PERGUNTA pode acessar (ADMIN não tem restrição DE CATEGORIA — isso nunca
+    // muda). Sem isso, o RAG vazaria trechos de documentos de categorias que o usuário não
+    // deveria ver.
+    //
+    // Decisão ADMIN/OBSOLETO (2026-10-10): com a flag de ciclo de vida ligada, ADMIN
+    // também só recebe documentos VIGENTES por padrão no chat — alinhado com
+    // PesquisaService, que já aplicava isso pra todo mundo (achado na verificação V2).
+    // Acesso irrestrito por CATEGORIA continua igual pro admin. Histórico completo
+    // continua acessível de forma EXPLÍCITA via a tool buscarDocumentosIncluindoHistorico.
+    // Com a flag desligada, nenhuma mudança pra ninguém (nem admin, nem os demais papéis).
     @Bean
     public ContentRetriever documentoContentRetriever(
             ContentRetriever documentoContentRetrieverBruto,
             IDocumentoRepository documentoRepository,
-            CategoriaAccessService categoriaAccessService
+            CategoriaAccessService categoriaAccessService,
+            RagCicloVidaFiltroService ragCicloVidaFiltroService
     ) {
         return query -> {
             List<Content> conteudos = documentoContentRetrieverBruto.retrieve(query);
 
             if (categoriaAccessService.isAdmin()) {
-                return conteudos.stream().limit(MAX_TRECHOS_RECUPERADOS).toList();
+                return conteudos.stream()
+                        .filter(content -> !ragCicloVidaFiltroService.flagHabilitada()
+                                || apenasVigente(content, documentoRepository))
+                        .limit(MAX_TRECHOS_RECUPERADOS)
+                        .toList();
             }
 
             return conteudos.stream()
-                    .filter(content -> acessivelPelaCategoria(content, documentoRepository, categoriaAccessService))
+                    .filter(content -> acessivelPelaCategoria(
+                            content, documentoRepository, categoriaAccessService, ragCicloVidaFiltroService
+                    ))
                     .limit(MAX_TRECHOS_RECUPERADOS)
                     .toList();
         };
     }
 
-    private static boolean acessivelPelaCategoria(
-            Content content, IDocumentoRepository documentoRepository, CategoriaAccessService categoriaAccessService
-    ) {
+    // ADMIN: sem checagem de categoria (nunca teve), só o status — usado quando a flag está
+    // ligada. Documento inexistente/excluído também é descartado aqui (mesma regra de
+    // acessivelPelaCategoria, sem repetir o findById duas vezes por content).
+    private static boolean apenasVigente(Content content, IDocumentoRepository documentoRepository) {
         UUID documentoId = content.textSegment().metadata().getUUID("documento_id");
 
         if (documentoId == null) {
@@ -102,9 +118,29 @@ public class RagAssistantConfig {
 
         return documentoRepository.findById(documentoId)
                 .filter(documento -> !documento.isDeletado())
-                // Etapa 16 (C4): confere o status NO BANCO (fonte da verdade), nunca no
-                // metadado do chunk — mesma regra de PesquisaService.documentoAcessivel.
-                .filter(DocumentoEntity::isVigente)
+                .map(DocumentoEntity::isVigente)
+                .orElse(false);
+    }
+
+    private static boolean acessivelPelaCategoria(
+            Content content, IDocumentoRepository documentoRepository, CategoriaAccessService categoriaAccessService,
+            RagCicloVidaFiltroService ragCicloVidaFiltroService
+    ) {
+        UUID documentoId = content.textSegment().metadata().getUUID("documento_id");
+
+        if (documentoId == null) {
+            return false;
+        }
+
+        // Etapa 16 (decisão ADMIN/OBSOLETO): só aplica com a flag ligada — desligada,
+        // nenhuma mudança em relação a antes da Etapa 16.
+        boolean aplicarFiltroDeStatus = ragCicloVidaFiltroService.flagHabilitada();
+
+        return documentoRepository.findById(documentoId)
+                .filter(documento -> !documento.isDeletado())
+                // Confere o status NO BANCO (fonte da verdade), nunca no metadado do chunk —
+                // mesma regra de PesquisaService.documentoAcessivel.
+                .filter(documento -> !aplicarFiltroDeStatus || documento.isVigente())
                 .map(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
                 .orElse(false);
     }
