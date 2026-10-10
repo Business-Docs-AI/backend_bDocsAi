@@ -3,6 +3,7 @@ package br.com.example.senac.businessDocsAi.ai.retrieval;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
 import br.com.example.senac.businessDocsAi.document.dto.ResultadoBuscaDTO;
 import br.com.example.senac.businessDocsAi.document.dto.TrechoDTO;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -39,24 +40,39 @@ public class PesquisaService {
     private final PgVectorEmbeddingStore embeddingStore;
     private final IDocumentoRepository documentoRepository;
     private final CategoriaAccessService categoriaAccessService;
+    private final RagCicloVidaFiltroService ragCicloVidaFiltroService;
 
     @PreAuthorize("isAuthenticated()")
     public List<ResultadoBuscaDTO> buscar(String query) {
+        return buscar(query, false);
+    }
+
+    // Etapa 16 (decisão ADMIN/OBSOLETO, 2026-10-10): incluirHistorico=true pula o filtro de
+    // ciclo de vida por completo (pré e pós-busca), mesmo com a flag ligada — usado pela
+    // tool buscarDocumentosIncluindoHistorico, pra sempre haver um caminho explícito até
+    // documentos não-vigentes, já que o padrão (buscar/buscarDocumentos) passa a escondê-los
+    // quando a flag está ligada. categoria/deletado continuam valendo sempre.
+    @PreAuthorize("isAuthenticated()")
+    public List<ResultadoBuscaDTO> buscar(String query, boolean incluirHistorico) {
 
         Embedding embeddingConsulta = embeddingModel.embed(query).content();
 
-        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+        EmbeddingSearchRequest.EmbeddingSearchRequestBuilder requestBuilder = EmbeddingSearchRequest.builder()
                 .queryEmbedding(embeddingConsulta)
                 .maxResults(MAX_RESULTADOS_BRUTOS)
-                .minScore(SCORE_MINIMO)
-                .build();
+                .minScore(SCORE_MINIMO);
 
-        EmbeddingSearchResult<TextSegment> resultado = embeddingStore.search(request);
+        // Etapa 16 (C4): mesma regra "vigente por padrão" do RagAssistantConfig, também aqui.
+        if (!incluirHistorico) {
+            ragCicloVidaFiltroService.filtroStatusVigente().ifPresent(requestBuilder::filter);
+        }
 
-        return agrupar(resultado.matches());
+        EmbeddingSearchResult<TextSegment> resultado = embeddingStore.search(requestBuilder.build());
+
+        return agrupar(resultado.matches(), incluirHistorico);
     }
 
-    private List<ResultadoBuscaDTO> agrupar(List<EmbeddingMatch<TextSegment>> matches) {
+    private List<ResultadoBuscaDTO> agrupar(List<EmbeddingMatch<TextSegment>> matches, boolean incluirHistorico) {
 
         Map<UUID, List<EmbeddingMatch<TextSegment>>> porDocumento = matches.stream()
                 .collect(Collectors.groupingBy(
@@ -70,7 +86,7 @@ public class PesquisaService {
         for (Map.Entry<UUID, List<EmbeddingMatch<TextSegment>>> entry : porDocumento.entrySet()) {
             UUID documentoId = entry.getKey();
 
-            if (!documentoAcessivel(documentoId)) {
+            if (!documentoAcessivel(documentoId, incluirHistorico)) {
                 continue;
             }
 
@@ -102,9 +118,18 @@ public class PesquisaService {
         return resultados;
     }
 
-    private boolean documentoAcessivel(UUID documentoId) {
+    private boolean documentoAcessivel(UUID documentoId, boolean incluirHistorico) {
+        // Etapa 16 (decisão ADMIN/OBSOLETO): o filtro de ciclo de vida (pré E pós-busca) só
+        // aplica com a flag ligada — desligada, nenhuma mudança em relação a antes da Etapa
+        // 16, pra qualquer papel. incluirHistorico sempre pula, mesmo com a flag ligada.
+        boolean aplicarFiltroDeStatus = !incluirHistorico && ragCicloVidaFiltroService.flagHabilitada();
+
         return documentoRepository.findById(documentoId)
                 .filter(documento -> !documento.isDeletado())
+                // Confere o status NO BANCO (fonte da verdade), nunca no metadado do chunk —
+                // um chunk com metadado desatualizado nunca pode trazer um documento
+                // OBSOLETO (ou qualquer status != VIGENTE) de volta pra busca.
+                .filter(documento -> !aplicarFiltroDeStatus || documento.isVigente())
                 .map(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
                 .orElse(false);
     }

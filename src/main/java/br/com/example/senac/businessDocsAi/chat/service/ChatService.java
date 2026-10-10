@@ -315,9 +315,11 @@ public class ChatService {
     // Lê o rascunho de documento pendente (se houver) direto do banco, para o frontend
     // renderizar o documento proposto formatado numa área separada da mensagem de chat — a
     // IA não repete mais título/HTML na própria resposta (ver DocumentoTools).
+    // Etapa 13.5: "proposta pendente" agora inclui GERANDO/ERRO_GERACAO (R1) — o frontend
+    // usa o campo status pra mostrar "gerando..."/o erro, não só o documento pronto.
     private PropostaDocumentoDTO buscarPropostaDocumentoPendente(UUID conversaId) {
         return rascunhoRepository
-                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE)
+                .findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos())
                 .map(this::toPropostaDocumentoDTO)
                 .orElse(null);
     }
@@ -336,7 +338,9 @@ public class ChatService {
                 rascunho.getCategoriaId(),
                 categoriaNome,
                 rascunho.getTitulo(),
-                rascunho.getConteudoHtml()
+                rascunho.getConteudoHtml(),
+                rascunho.getStatus().name(),
+                rascunho.getErroGeracao()
         );
     }
 

@@ -41,9 +41,12 @@ public class DocumentoController {
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<DocumentoResponseDTO>> listar(
-            @RequestParam(value = "categoriaId", required = false) Long categoriaId
+            @RequestParam(value = "categoriaId", required = false) Long categoriaId,
+            // Etapa 18 (decisão 9): filtro de listagem pra revisão vencida — a indicação
+            // visual é Etapa 19 (frontend).
+            @RequestParam(value = "revisaoVencida", required = false, defaultValue = "false") boolean revisaoVencida
     ) {
-        return ResponseEntity.ok(documentoService.listar(categoriaId));
+        return ResponseEntity.ok(documentoService.listar(categoriaId, revisaoVencida));
     }
 
     @PostMapping

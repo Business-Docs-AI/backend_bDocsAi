@@ -5,11 +5,13 @@ import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessSer
 import br.com.example.senac.businessDocsAi.categories.service.CategoryService;
 import br.com.example.senac.businessDocsAi.chat.service.ConversaContextHolder;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.dto.ResultadoBuscaDTO;
 import br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
 import br.com.example.senac.businessDocsAi.document.entity.StatusRascunho;
 import br.com.example.senac.businessDocsAi.document.entity.TipoRascunho;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.service.DocumentoEstruturadoAplicadorService;
 import br.com.example.senac.businessDocsAi.document.service.DocumentoService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -44,6 +47,9 @@ class DocumentoToolsTest {
     @Mock
     private CategoriaAccessService categoriaAccessService;
 
+    @Mock
+    private DocumentoEstruturadoAplicadorService documentoEstruturadoAplicadorService;
+
     private DocumentoTools documentoTools;
 
     private final UUID conversaId = UUID.randomUUID();
@@ -53,7 +59,8 @@ class DocumentoToolsTest {
     @BeforeEach
     void setUp() {
         documentoTools = new DocumentoTools(
-                documentoService, pesquisaService, rascunhoRepository, categoryService, categoriaAccessService
+                documentoService, pesquisaService, rascunhoRepository, categoryService, categoriaAccessService,
+                documentoEstruturadoAplicadorService
         );
         ConversaContextHolder.iniciar(conversaId, turnoAtual);
     }
@@ -95,7 +102,7 @@ class DocumentoToolsTest {
 
     @Test
     void confirmarRascunhoPendenteSemNenhumRascunhoDevolveMensagemSemChamarDocumentoService() {
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.empty());
 
         String resposta = documentoTools.confirmarRascunhoPendente();
@@ -108,7 +115,7 @@ class DocumentoToolsTest {
     void confirmarRascunhoPendenteNoMesmoTurnoDaPropostaEhRecusado() {
         RascunhoDocumentoEntity rascunho = rascunhoCriar(turnoAtual);
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         String resposta = documentoTools.confirmarRascunhoPendente();
@@ -124,7 +131,7 @@ class DocumentoToolsTest {
         UUID turnoAnterior = UUID.randomUUID();
         RascunhoDocumentoEntity rascunho = rascunhoCriar(turnoAnterior);
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         DocumentoResponseDTO documentoCriado = new DocumentoResponseDTO(
@@ -158,7 +165,7 @@ class DocumentoToolsTest {
         rascunho.setTurnoCriacao(turnoAnterior);
         rascunho.setCriadoEm(LocalDateTime.now());
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
 
         DocumentoResponseDTO documentoAtualizado = new DocumentoResponseDTO(
@@ -177,14 +184,34 @@ class DocumentoToolsTest {
     void descartarRascunhoPendenteMarcaDescartadoSemChamarDocumentoService() {
         RascunhoDocumentoEntity rascunho = rascunhoCriar(UUID.randomUUID());
 
-        when(rascunhoRepository.findFirstByConversaIdAndStatusOrderByCriadoEmDesc(conversaId, StatusRascunho.PENDENTE))
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
                 .thenReturn(Optional.of(rascunho));
+        when(rascunhoRepository.descartar(rascunho.getId(), StatusRascunho.ativos())).thenReturn(1);
 
         String resposta = documentoTools.descartarRascunhoPendente();
 
-        assertThat(rascunho.getStatus()).isEqualTo(StatusRascunho.DESCARTADO);
+        // UPDATE condicional (não save() da entidade inteira) — ver bug corrigido em
+        // IRascunhoDocumentoRepositoryGeracaoAssincronaTest,
+        // saveDeEntidadeLidaAntesDoFinalizarComSucessoApagaOConteudoRecemGravado.
+        verify(rascunhoRepository).descartar(rascunho.getId(), StatusRascunho.ativos());
+        verify(rascunhoRepository, never()).save(any());
         assertThat(resposta).containsIgnoringCase("descartada");
         verifyNoInteractions(documentoService);
+    }
+
+    @Test
+    void descartarRascunhoPendenteQuandoWorkerJaTerminouAvisaQueNaoEstaMaisAtiva() {
+        RascunhoDocumentoEntity rascunho = rascunhoCriar(UUID.randomUUID());
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(rascunho));
+        // affected=0: o worker terminou (ou outro descarte já rodou) entre o findFirst e o
+        // descartar() — a linha não está mais em nenhum status ativo.
+        when(rascunhoRepository.descartar(rascunho.getId(), StatusRascunho.ativos())).thenReturn(0);
+
+        String resposta = documentoTools.descartarRascunhoPendente();
+
+        assertThat(resposta).containsIgnoringCase("não está mais ativa");
     }
 
     private RascunhoDocumentoEntity rascunhoCriar(UUID turno) {
@@ -197,5 +224,199 @@ class DocumentoToolsTest {
         rascunho.setTurnoCriacao(turno);
         rascunho.setCriadoEm(LocalDateTime.now());
         return rascunho;
+    }
+
+    // --- Etapa 13.3 (R1): tools legadas agora respeitam GERANDO/ERRO_GERACAO ---
+
+    @Test
+    void prepararCriacaoDocumentoComOutroRascunhoGerandoNaConversaRecusa() {
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.prepararCriacaoDocumento("Outro", "<p>x</p>", CATEGORIA_ID);
+
+        assertThat(resposta).containsIgnoringCase("já existe um documento sendo gerado");
+        verify(rascunhoRepository, never()).save(any());
+    }
+
+    // F2 (2026-10-10): confirma que prepararAtualizacaoDocumento também recusa com um
+    // rascunho GERANDO na conversa (só prepararCriacaoDocumento tinha teste disso até aqui).
+    @Test
+    void prepararAtualizacaoDocumentoComOutroRascunhoGerandoNaConversaRecusa() {
+        UUID documentoIdAlvo = UUID.randomUUID();
+        DocumentoResponseDTO documentoAtual = new DocumentoResponseDTO(
+                documentoIdAlvo, "Título Atual", "<p>x</p>", 1, StatusIndexacao.PENDENTE, "Autor",
+                LocalDateTime.now(), null, null, CATEGORIA_ID, null
+        );
+        when(documentoService.buscarPorId(documentoIdAlvo)).thenReturn(documentoAtual);
+
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.prepararAtualizacaoDocumento(documentoIdAlvo.toString(), "Outro", "<p>x</p>");
+
+        assertThat(resposta).containsIgnoringCase("já existe um documento sendo gerado");
+        verify(rascunhoRepository, never()).save(any());
+    }
+
+    // F2 (2026-10-10): as tools LEGADAS (preparar*) sempre recebem o HTML completo como
+    // parâmetro (nunca leem conteudoHtml do rascunho antigo) — encontrar um rascunho em
+    // ERRO_GERACAO é seguro: sobrescreve a linha com o conteúdo novo, nunca mescla nem lê o
+    // conteudoHtml antigo (que podia estar nulo, já que o worker assíncrono nunca chegou a
+    // escrever nada antes de falhar).
+    @Test
+    void prepararCriacaoDocumentoComRascunhoEmErroSobrescreveSemLerConteudoAntigo() {
+        RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
+        emErro.setId(UUID.randomUUID());
+        emErro.setStatus(StatusRascunho.ERRO_GERACAO);
+        emErro.setErroGeracao("Falha anterior do worker assíncrono");
+        emErro.setConteudoHtml(null); // worker nunca chegou a escrever nada
+        emErro.setTentativasGeracao(2);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(emErro));
+        when(rascunhoRepository.save(any(RascunhoDocumentoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        documentoTools.prepararCriacaoDocumento("Novo Título", "<p>conteúdo novo completo</p>", CATEGORIA_ID);
+
+        ArgumentCaptor<RascunhoDocumentoEntity> captor = ArgumentCaptor.forClass(RascunhoDocumentoEntity.class);
+        verify(rascunhoRepository).save(captor.capture());
+
+        RascunhoDocumentoEntity salvo = captor.getValue();
+        assertThat(salvo.getStatus()).isEqualTo(StatusRascunho.PENDENTE);
+        assertThat(salvo.getConteudoHtml()).isEqualTo("<p>conteúdo novo completo</p>");
+        assertThat(salvo.getErroGeracao()).isNull();
+        assertThat(salvo.getTentativasGeracao()).isZero();
+    }
+
+    @Test
+    void prepararAtualizacaoDocumentoComRascunhoEmErroSobrescreveSemLerConteudoAntigo() {
+        UUID documentoIdAlvo = UUID.randomUUID();
+        DocumentoResponseDTO documentoAtual = new DocumentoResponseDTO(
+                documentoIdAlvo, "Título Atual", "<p>conteúdo antigo</p>", 1, StatusIndexacao.PENDENTE, "Autor",
+                LocalDateTime.now(), null, null, CATEGORIA_ID, null
+        );
+        when(documentoService.buscarPorId(documentoIdAlvo)).thenReturn(documentoAtual);
+
+        RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
+        emErro.setId(UUID.randomUUID());
+        emErro.setStatus(StatusRascunho.ERRO_GERACAO);
+        emErro.setErroGeracao("Falha anterior do worker assíncrono");
+        emErro.setConteudoHtml(null);
+        emErro.setTentativasGeracao(1);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(emErro));
+        when(rascunhoRepository.save(any(RascunhoDocumentoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        documentoTools.prepararAtualizacaoDocumento(documentoIdAlvo.toString(), "Novo Título", "<p>conteúdo novo completo</p>");
+
+        ArgumentCaptor<RascunhoDocumentoEntity> captor = ArgumentCaptor.forClass(RascunhoDocumentoEntity.class);
+        verify(rascunhoRepository).save(captor.capture());
+
+        RascunhoDocumentoEntity salvo = captor.getValue();
+        assertThat(salvo.getStatus()).isEqualTo(StatusRascunho.PENDENTE);
+        assertThat(salvo.getConteudoHtml()).isEqualTo("<p>conteúdo novo completo</p>");
+        assertThat(salvo.getErroGeracao()).isNull();
+        assertThat(salvo.getTentativasGeracao()).isZero();
+    }
+
+    @Test
+    void confirmarRascunhoEmGerandoERecusadoComMensagemClara() {
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+
+        String resposta = documentoTools.confirmarRascunhoPendente();
+
+        assertThat(resposta).containsIgnoringCase("ainda está sendo gerado");
+        verifyNoInteractions(documentoService);
+    }
+
+    @Test
+    void confirmarRascunhoEmErroGeracaoERecusadoComAMensagemDeErro() {
+        RascunhoDocumentoEntity emErro = new RascunhoDocumentoEntity();
+        emErro.setStatus(StatusRascunho.ERRO_GERACAO);
+        emErro.setErroGeracao("Esgotou as tentativas de validação");
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(emErro));
+
+        String resposta = documentoTools.confirmarRascunhoPendente();
+
+        assertThat(resposta).contains("Esgotou as tentativas de validação");
+        verifyNoInteractions(documentoService);
+    }
+
+    @Test
+    void descartarRascunhoEmGerandoFunciona() {
+        UUID id = UUID.randomUUID();
+        RascunhoDocumentoEntity gerando = new RascunhoDocumentoEntity();
+        gerando.setId(id);
+        gerando.setStatus(StatusRascunho.GERANDO);
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(gerando));
+        when(rascunhoRepository.descartar(id, StatusRascunho.ativos())).thenReturn(1);
+
+        String resposta = documentoTools.descartarRascunhoPendente();
+
+        verify(rascunhoRepository).descartar(id, StatusRascunho.ativos());
+        assertThat(resposta).containsIgnoringCase("descartada");
+    }
+
+    // Decisão B3 pelo caminho do chat: um rascunho com conteudoEstruturado preenchido
+    // confirma pelo DocumentoEstruturadoAplicadorService, nunca por documentoService.criar
+    // direto (esse é o aplicador real, testado em DocumentoEstruturadoAplicadorServiceTest).
+    @Test
+    void confirmarRascunhoComConteudoEstruturadoDelegaParaOAplicador() {
+        UUID turnoAnterior = UUID.randomUUID();
+        RascunhoDocumentoEntity rascunho = rascunhoCriar(turnoAnterior);
+        rascunho.setConteudoEstruturado("{\"objetivo\":\"x\"}");
+        rascunho.setVersaoSchema("1.0");
+
+        when(rascunhoRepository.findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(conversaId, StatusRascunho.ativos()))
+                .thenReturn(Optional.of(rascunho));
+
+        DocumentoResponseDTO documentoCriado = new DocumentoResponseDTO(
+                UUID.randomUUID(), rascunho.getTitulo(), "<h2>x</h2>", 1, StatusIndexacao.PENDENTE, "Autor",
+                LocalDateTime.now(), null, null, null, null
+        );
+        when(documentoEstruturadoAplicadorService.aplicar(rascunho)).thenReturn(documentoCriado);
+
+        String resposta = documentoTools.confirmarRascunhoPendente();
+
+        verify(documentoEstruturadoAplicadorService).aplicar(rascunho);
+        verifyNoInteractions(documentoService);
+        assertThat(resposta).contains(documentoCriado.id().toString());
+    }
+
+    // Decisão ADMIN/OBSOLETO (2026-10-10): buscarDocumentosIncluindoHistorico é o caminho
+    // explícito de volta pro histórico completo — delega para pesquisaService.buscar com
+    // incluirHistorico=true, nunca para o overload de 1 argumento (que esconde não-vigentes
+    // com a flag ligada).
+    @Test
+    void buscarDocumentosIncluindoHistoricoDelegaParaPesquisaServiceComIncluirHistorico() {
+        UUID documentoId = UUID.randomUUID();
+        ResultadoBuscaDTO resultado = new ResultadoBuscaDTO(documentoId, "Documento Obsoleto", 0.87, List.of());
+        when(pesquisaService.buscar("política antiga", true)).thenReturn(List.of(resultado));
+
+        String resposta = documentoTools.buscarDocumentosIncluindoHistorico("política antiga");
+
+        verify(pesquisaService).buscar("política antiga", true);
+        verify(pesquisaService, never()).buscar("política antiga");
+        assertThat(resposta).contains(documentoId.toString());
+        assertThat(resposta).contains("Documento Obsoleto");
+        assertThat(resposta).contains(String.format("%.2f", 0.87));
+    }
+
+    @Test
+    void buscarDocumentosIncluindoHistoricoSemResultadosAvisaOQueFoiBuscado() {
+        when(pesquisaService.buscar("nada disso existe", true)).thenReturn(List.of());
+
+        String resposta = documentoTools.buscarDocumentosIncluindoHistorico("nada disso existe");
+
+        assertThat(resposta).containsIgnoringCase("nenhum documento encontrado");
     }
 }

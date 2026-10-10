@@ -3,16 +3,22 @@ package br.com.example.senac.businessDocsAi.document.service;
 import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
 import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
 import br.com.example.senac.businessDocsAi.categories.service.CategoriaAccessService;
+import br.com.example.senac.businessDocsAi.document.dto.DocumentoEstruturadoMetadadosDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoRequestDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoResponseDTO;
 import br.com.example.senac.businessDocsAi.document.dto.DocumentoVersaoResponseDTO;
+import br.com.example.senac.businessDocsAi.document.entity.DocumentoAreaParticipanteEntity;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoVersaoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
+import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoAlteradoEvent;
 import br.com.example.senac.businessDocsAi.document.event.DocumentoExcluidoEvent;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoAreaParticipanteRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoVersaoRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import br.com.example.senac.businessDocsAi.security.CurrentUserProvider;
 import lombok.RequiredArgsConstructor;
@@ -24,16 +30,22 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class DocumentoService {
+
+    private static final int PROFUNDIDADE_MAXIMA_HIERARQUIA = 50;
 
     private final IDocumentoRepository documentoRepository;
     private final IDocumentoVersaoRepository documentoVersaoRepository;
@@ -42,6 +54,7 @@ public class DocumentoService {
     private final CurrentUserProvider currentUserProvider;
     private final CategoriaAccessService categoriaAccessService;
     private final ApplicationEventPublisher eventPublisher;
+    private final IDocumentoAreaParticipanteRepository documentoAreaParticipanteRepository;
 
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     @Transactional
@@ -63,10 +76,17 @@ public class DocumentoService {
         documento.setCriadoPor(autor);
         documento.setCriadoEm(LocalDateTime.now());
         documento.setDeletado(false);
+        // Explícito em Java porque o Hibernate manda NULL pra coluna não setada no objeto —
+        // isso bypassaria o DEFAULT do banco (migration V9). Preserva "documento confirmado
+        // pelo fluxo atual = vigente", o comportamento de hoje.
+        documento.setTipoDocumento(TipoDocumento.NAO_CLASSIFICADO);
+        documento.setStatusCicloVida(StatusCicloVida.VIGENTE);
 
         DocumentoEntity salvo = documentoRepository.save(documento);
 
-        registrarNovaVersao(salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1);
+        // Criação via DocumentoRequestDTO (fluxo legado) nunca carrega estruturado — fica
+        // null, como o campo já nasce (decisão C3/B3).
+        registrarNovaVersao(salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1, null, null);
 
         eventPublisher.publishEvent(new DocumentoAlteradoEvent(salvo.getId(), salvo.getVersaoAtual()));
 
@@ -86,20 +106,193 @@ public class DocumentoService {
         String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
         String novoHash = calcularHash(dto.titulo(), htmlSanitizado);
 
+        Long categoriaAnterior = documento.getCategoriaId();
         documento.setCategoriaId(dto.categoriaId());
 
         if (novoHash.equals(documento.getHashConteudo())) {
             documentoRepository.save(documento);
+
+            // Etapa 17/B4 (achado na verificação V4): categoria é metadado do chunk (Etapa
+            // 14) — mudar SÓ a categoria (conteúdo idêntico, early return) atualizava a
+            // coluna no banco mas nunca disparava reindexação, deixando o metadado do chunk
+            // dessincronizado. Dispara com a MESMA versaoAtual (não houve nova versão de
+            // conteúdo) só quando a categoria de fato mudou — nunca à toa.
+            if (!Objects.equals(categoriaAnterior, dto.categoriaId())) {
+                eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
+            }
+
             return toResponseDTO(documento);
         }
 
-        aplicarNovaVersao(documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao());
+        // Decisão C3: atualizar pelo fluxo LEGADO de HTML sempre invalida o conteúdo
+        // estruturado que o documento tivesse (null explícito) — o JSON antigo continua só
+        // na versão anterior, nunca é copiado pra frente por engano. DocumentoRequestDTO
+        // nunca carrega estruturado, então não há como preservar aqui mesmo que quisesse.
+        aplicarNovaVersao(documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao(), null, null);
 
         return toResponseDTO(documento);
     }
 
+    // Etapa 13.3 (decisão B3, confirmação da proposta estruturada gerada pelo worker
+    // assíncrono): equivalente a criar(), mas grava conteudoEstruturado/versaoSchema na
+    // versão 1 e aplica o bloco de metadados nas colunas do documento — nunca dentro do
+    // JSON de conteúdo salvo. O conteúdo HTML já vem renderizado/sanitizado pelo worker
+    // (EstruturaDocumentoHtmlRenderer já sanitiza internamente) — sanitiza de novo aqui
+    // mesmo assim, pela mesma razão de sempre (nunca confiar em HTML vindo de fora deste
+    // método, mesmo que a origem pareça seguir as mesmas regras).
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @Transactional
+    public DocumentoResponseDTO criarComEstrutura(
+            DocumentoRequestDTO dto, String conteudoEstruturadoJson, String versaoSchema,
+            DocumentoEstruturadoMetadadosDTO metadados
+    ) {
+        categoriaAccessService.validarAcessoCategoria(dto.categoriaId());
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
+        String hash = calcularHash(dto.titulo(), htmlSanitizado);
+
+        DocumentoEntity documento = new DocumentoEntity();
+        documento.setTitulo(dto.titulo());
+        documento.setConteudoHtml(htmlSanitizado);
+        documento.setCategoriaId(dto.categoriaId());
+        documento.setHashConteudo(hash);
+        documento.setVersaoAtual(1);
+        documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
+        documento.setCriadoPor(autor);
+        documento.setCriadoEm(LocalDateTime.now());
+        documento.setDeletado(false);
+        documento.setStatusCicloVida(StatusCicloVida.VIGENTE);
+        // Mesma regra de aplicarNovaVersao (usada por atualizarComEstrutura/restaurarVersao):
+        // o documento espelha o conteudoEstruturado/versaoSchema da sua própria versão
+        // atual, não só a linha em documento_versao — sem isto, documento.conteudo_estruturado
+        // ficava sempre nulo na CRIAÇÃO estruturada (só documento_versao tinha o valor),
+        // divergindo de atualizarComEstrutura/restaurarVersao (achado no teste manual E2E
+        // da Etapa 13.6, modo modelo-fake).
+        documento.setConteudoEstruturado(conteudoEstruturadoJson);
+        documento.setVersaoSchema(versaoSchema);
+        aplicarMetadadosEstruturados(documento, null, metadados);
+
+        DocumentoEntity salvo = documentoRepository.save(documento);
+
+        registrarNovaVersao(
+                salvo, htmlSanitizado, autor, dto.comentarioAlteracao(), 1, conteudoEstruturadoJson, versaoSchema
+        );
+        aplicarAreasParticipantes(salvo.getId(), metadados);
+
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(salvo.getId(), salvo.getVersaoAtual()));
+
+        return toResponseDTO(salvo);
+    }
+
+    // Ver criarComEstrutura — mesma ideia para atualização. Diferente de atualizar() (fluxo
+    // legado), aqui SEMPRE versiona (nunca pula por hash igual): confirmar uma proposta
+    // estruturada é uma ação deliberada e explícita do usuário, não uma edição de rotina.
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @Transactional
+    public DocumentoResponseDTO atualizarComEstrutura(
+            UUID id, DocumentoRequestDTO dto, String conteudoEstruturadoJson, String versaoSchema,
+            DocumentoEstruturadoMetadadosDTO metadados
+    ) {
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+        categoriaAccessService.validarAcessoCategoria(dto.categoriaId());
+
+        String autor = currentUserProvider.getCurrentUserName();
+        String htmlSanitizado = htmlSanitizerService.sanitize(dto.conteudoHtml());
+        String novoHash = calcularHash(dto.titulo(), htmlSanitizado);
+
+        documento.setCategoriaId(dto.categoriaId());
+        aplicarMetadadosEstruturados(documento, id, metadados);
+
+        aplicarNovaVersao(
+                documento, dto.titulo(), htmlSanitizado, novoHash, autor, dto.comentarioAlteracao(),
+                conteudoEstruturadoJson, versaoSchema
+        );
+        aplicarAreasParticipantes(id, metadados);
+
+        return toResponseDTO(documento);
+    }
+
+    private void aplicarMetadadosEstruturados(
+            DocumentoEntity documento, UUID documentoIdParaChecarCiclo, DocumentoEstruturadoMetadadosDTO metadados
+    ) {
+        if (metadados == null) {
+            documento.setTipoDocumento(TipoDocumento.NAO_CLASSIFICADO);
+            return;
+        }
+
+        documento.setTipoDocumento(
+                metadados.tipoDocumento() != null ? metadados.tipoDocumento() : TipoDocumento.NAO_CLASSIFICADO
+        );
+        documento.setMacroprocessoId(metadados.macroprocessoId());
+
+        if (metadados.processoPaiId() != null) {
+            // documentoIdParaChecarCiclo é null na criação (o ID ainda não existe — não há
+            // como um documento inexistente já ser ancestral de ninguém, então o
+            // autorreferência/ciclo é trivialmente impossível nesse caso).
+            validarHierarquiaProcesso(documentoIdParaChecarCiclo, metadados.processoPaiId());
+        }
+        documento.setProcessoPaiId(metadados.processoPaiId());
+
+        documento.setDonoProcesso(metadados.donoProcesso());
+        documento.setAprovador(metadados.aprovador());
+        documento.setPeriodicidadeRevisaoMeses(metadados.periodicidadeRevisaoMeses());
+        documento.setConfidencialidade(metadados.confidencialidade());
+        documento.setTags(metadados.tags());
+
+        // Etapa 18 (decisão 9): recalcula sempre que os metadados são aplicados (criação,
+        // atualização, ou a própria periodicidade mudando) — nunca incrementalmente, pra
+        // uma periodicidade alterada (ex.: de anual pra semestral) já refletir na próxima
+        // vez que o documento for salvo, sem exigir um gatilho separado.
+        documento.setProximaRevisao(calcularProximaRevisao(documento));
+    }
+
+    // Etapa 18 (A6): documento OBSOLETO nunca conta como "revisão vencida" — não teria
+    // sentido cobrar revisão de um processo que já não está mais em vigor.
+    private boolean isRevisaoVencida(DocumentoEntity documento) {
+        return documento.getStatusCicloVida() != StatusCicloVida.OBSOLETO
+                && documento.getProximaRevisao() != null
+                && documento.getProximaRevisao().isBefore(LocalDate.now());
+    }
+
+    // dataVigencia nunca é setada pelo DTO estruturado hoje (fica sempre null) — na prática,
+    // a base é sempre "hoje" (quando os metadados foram definidos/atualizados). Se
+    // dataVigencia vier a ser preenchida no futuro, passa a valer como base em vez de hoje.
+    private LocalDate calcularProximaRevisao(DocumentoEntity documento) {
+        if (documento.getPeriodicidadeRevisaoMeses() == null) {
+            return null;
+        }
+
+        LocalDate base = documento.getDataVigencia() != null ? documento.getDataVigencia() : LocalDate.now();
+        return base.plusMonths(documento.getPeriodicidadeRevisaoMeses());
+    }
+
+    // Substitui por completo o conjunto de áreas participantes pelo que a proposta trouxe —
+    // nunca usado para controle de acesso (ver DocumentoAreaParticipanteEntity).
+    private void aplicarAreasParticipantes(UUID documentoId, DocumentoEstruturadoMetadadosDTO metadados) {
+        documentoAreaParticipanteRepository.deleteByDocumentoId(documentoId);
+
+        if (metadados == null || metadados.areasParticipantes() == null) {
+            return;
+        }
+
+        for (Long categoriaId : metadados.areasParticipantes()) {
+            documentoAreaParticipanteRepository.save(new DocumentoAreaParticipanteEntity(documentoId, categoriaId));
+        }
+    }
+
     @PreAuthorize("isAuthenticated()")
     public List<DocumentoResponseDTO> listar(Long categoriaId) {
+        return listar(categoriaId, false);
+    }
+
+    // Etapa 18 (decisão 9, filtro de listagem): revisaoVencida=true devolve só documentos
+    // com proximaRevisao no passado — a INDICAÇÃO visual disso é Etapa 19 (frontend), esta
+    // etapa só precisa entregar o filtro em si, no backend.
+    @PreAuthorize("isAuthenticated()")
+    public List<DocumentoResponseDTO> listar(Long categoriaId, boolean somenteRevisaoVencida) {
 
         if (categoriaId != null) {
             categoriaAccessService.validarAcessoCategoria(categoriaId);
@@ -111,12 +304,23 @@ public class DocumentoService {
 
         List<DocumentoEntity> acessiveis = documentos.stream()
                 .filter(documento -> categoriaAccessService.podeAcessarCategoria(documento.getCategoriaId()))
+                .filter(documento -> !somenteRevisaoVencida || isRevisaoVencida(documento))
                 .toList();
 
         Map<Long, String> nomesCategorias = carregarNomesCategorias(acessiveis);
+        Set<UUID> idsDeProcessoPaiVisiveis = carregarIdsDeProcessoPaiVisiveis(acessiveis);
 
         return acessiveis.stream()
-                .map(documento -> toResponseDTO(documento, nomesCategorias.get(documento.getCategoriaId())))
+                .map(documento -> {
+                    UUID processoPaiVisivel = documento.getProcessoPaiId() != null
+                            && idsDeProcessoPaiVisiveis.contains(documento.getProcessoPaiId())
+                            ? documento.getProcessoPaiId()
+                            : null;
+
+                    return montarResponseDTO(
+                            documento, nomesCategorias.get(documento.getCategoriaId()), processoPaiVisivel
+                    );
+                })
                 .toList();
     }
 
@@ -140,7 +344,41 @@ public class DocumentoService {
         }
 
         String comentario = "Restauração da versão " + numeroVersao;
-        aplicarNovaVersao(documento, versaoAlvo.getTitulo(), htmlSanitizado, novoHash, autor, comentario);
+        // Restaurar traz de volta o conteúdo estruturado DAQUELA versão (se ela tinha) —
+        // diferente de atualizar() pelo fluxo legado, aqui não é uma edição às cegas, é
+        // voltar pra um estado que já existiu, íntegro.
+        aplicarNovaVersao(
+                documento, versaoAlvo.getTitulo(), htmlSanitizado, novoHash, autor, comentario,
+                versaoAlvo.getConteudoEstruturado(), versaoAlvo.getVersaoSchema()
+        );
+
+        return toResponseDTO(documento);
+    }
+
+    // Sem fluxo de aprovação (EM_ELABORACAO→EM_REVISAO→VIGENTE→OBSOLETO) — adiado de
+    // propósito, ver docs/plano-documentacao-estruturada.md. Troca direta, sem validação de
+    // transição. É uma mudança só de metadado: não versiona conteúdo, só atualiza
+    // atualizado_por/atualizado_em. O gatilho de reindexação por essa mudança é da Etapa 17
+    // — não disparado ainda aqui, de propósito (esta etapa só introduz o caminho em si).
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public DocumentoResponseDTO atualizarStatusCicloVida(UUID id, StatusCicloVida novoStatus) {
+
+        DocumentoEntity documento = buscarAtivoOrElseThrow(id);
+        categoriaAccessService.validarAcessoCategoria(documento.getCategoriaId());
+
+        documento.setStatusCicloVida(novoStatus);
+        documento.setAtualizadoPor(currentUserProvider.getCurrentUserName());
+        documento.setAtualizadoEm(LocalDateTime.now());
+        documentoRepository.save(documento);
+
+        // Etapa 17 (B4, decisão 7): status_ciclo_vida é metadado do CHUNK (Etapa 14) e do
+        // pré-filtro do RAG (Etapa 16) — essa troca não versiona o documento (decisão
+        // original do endpoint, Etapa 5), mas precisa reindexar pra sincronizar o metadado
+        // nos chunks já existentes. Sempre ligado (B4) — não atrás de nenhuma flag de RAG.
+        // Mesma versaoAtual de sempre: IndexacaoService.indexar() só confere que ainda é a
+        // vigente, nunca exige que tenha mudado.
+        eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
 
         return toResponseDTO(documento);
     }
@@ -203,15 +441,47 @@ public class DocumentoService {
         eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), documento.getVersaoAtual()));
     }
 
+    // Valida um vínculo de hierarquia de processo ANTES de aplicá-lo a um documento —
+    // rejeita auto-referência e qualquer ciclo (A→B→A). Reaproveitada pela Etapa 13 ao
+    // aplicar metadados estruturados; nenhum caminho hoje seta processoPaiId ainda, então
+    // não há chamador em produção nesta etapa.
+    public void validarHierarquiaProcesso(UUID documentoId, UUID novoProcessoPaiId) {
+        if (novoProcessoPaiId == null) {
+            return;
+        }
+
+        if (novoProcessoPaiId.equals(documentoId)) {
+            throw new BadRequestException("Um documento não pode ser pai de si mesmo.");
+        }
+
+        UUID atual = novoProcessoPaiId;
+        for (int i = 0; i < PROFUNDIDADE_MAXIMA_HIERARQUIA; i++) {
+            DocumentoEntity pai = documentoRepository.findById(atual).orElse(null);
+            if (pai == null || pai.getProcessoPaiId() == null) {
+                return;
+            }
+            if (pai.getProcessoPaiId().equals(documentoId)) {
+                throw new BadRequestException("Esse vínculo de hierarquia formaria um ciclo.");
+            }
+            atual = pai.getProcessoPaiId();
+        }
+
+        throw new BadRequestException("Hierarquia de processo excede a profundidade máxima permitida.");
+    }
+
     // Compartilhado por atualizar/restaurar: incrementa a versão vigente, grava o histórico
     // e dispara a reindexação. Criação não passa por aqui pois a versão 1 não "incrementa" nada.
+    // conteudoEstruturado/versaoSchema são decididos pelo CHAMADOR (decisão B3/C3) — este
+    // método só grava o que recebe, nunca decide sozinho se deve preservar ou invalidar.
     private void aplicarNovaVersao(
             DocumentoEntity documento,
             String titulo,
             String htmlSanitizado,
             String hash,
             String autor,
-            String comentario
+            String comentario,
+            String conteudoEstruturado,
+            String versaoSchema
     ) {
         int novaVersao = documento.getVersaoAtual() + 1;
 
@@ -222,10 +492,21 @@ public class DocumentoService {
         documento.setStatusIndexacao(StatusIndexacao.PENDENTE);
         documento.setAtualizadoPor(autor);
         documento.setAtualizadoEm(LocalDateTime.now());
+        documento.setConteudoEstruturado(conteudoEstruturado);
+        documento.setVersaoSchema(versaoSchema);
+
+        // Etapa 18 (achado na verificação V4): proximaRevisao precisa ser recalculada em
+        // TODA nova versão de conteúdo (atualizar() legado, atualizarComEstrutura,
+        // restaurarVersao), não só quando aplicarMetadadosEstruturados roda — senão uma
+        // atualização de conteúdo pelo fluxo legado (sem bloco de metadados) nunca
+        // atualizava proximaRevisao, mesmo com periodicidadeRevisaoMeses já definida.
+        // Redundante-mas-inofensivo pra atualizarComEstrutura (que já recalcula em
+        // aplicarMetadadosEstruturados, chamado antes desta — mesmo resultado determinístico).
+        documento.setProximaRevisao(calcularProximaRevisao(documento));
 
         documentoRepository.save(documento);
 
-        registrarNovaVersao(documento, htmlSanitizado, autor, comentario, novaVersao);
+        registrarNovaVersao(documento, htmlSanitizado, autor, comentario, novaVersao, conteudoEstruturado, versaoSchema);
 
         eventPublisher.publishEvent(new DocumentoAlteradoEvent(documento.getId(), novaVersao));
     }
@@ -235,7 +516,9 @@ public class DocumentoService {
             String htmlSanitizado,
             String autor,
             String comentario,
-            int numeroVersao
+            int numeroVersao,
+            String conteudoEstruturado,
+            String versaoSchema
     ) {
         DocumentoVersaoEntity versao = new DocumentoVersaoEntity();
         versao.setDocumentoId(documento.getId());
@@ -246,6 +529,8 @@ public class DocumentoService {
         versao.setAutor(autor);
         versao.setCriadoEm(LocalDateTime.now());
         versao.setComentarioAlteracao(comentario);
+        versao.setConteudoEstruturado(conteudoEstruturado);
+        versao.setVersaoSchema(versaoSchema);
 
         documentoVersaoRepository.save(versao);
     }
@@ -286,6 +571,13 @@ public class DocumentoService {
     }
 
     private DocumentoResponseDTO toResponseDTO(DocumentoEntity documento, String categoriaNome) {
+        UUID processoPaiVisivel = resolverProcessoPaiVisivel(documento.getProcessoPaiId());
+        return montarResponseDTO(documento, categoriaNome, processoPaiVisivel);
+    }
+
+    private DocumentoResponseDTO montarResponseDTO(
+            DocumentoEntity documento, String categoriaNome, UUID processoPaiVisivel
+    ) {
         return new DocumentoResponseDTO(
                 documento.getId(),
                 documento.getTitulo(),
@@ -297,8 +589,48 @@ public class DocumentoService {
                 documento.getAtualizadoPor(),
                 documento.getAtualizadoEm(),
                 documento.getCategoriaId(),
-                categoriaNome
+                categoriaNome,
+                documento.getTipoDocumento(),
+                documento.getStatusCicloVida(),
+                documento.getDonoProcesso(),
+                documento.getAprovador(),
+                documento.getDataVigencia(),
+                documento.getProximaRevisao(),
+                documento.getPeriodicidadeRevisaoMeses(),
+                documento.getConfidencialidade(),
+                documento.getTags(),
+                documento.getMacroprocessoId(),
+                processoPaiVisivel
         );
+    }
+
+    // Um pai soft-deletado nunca é exposto como vínculo válido — ver DocumentoEntity.processoPaiId.
+    private UUID resolverProcessoPaiVisivel(UUID processoPaiId) {
+        if (processoPaiId == null) {
+            return null;
+        }
+        return documentoRepository.findById(processoPaiId)
+                .filter(pai -> !pai.isDeletado())
+                .map(DocumentoEntity::getId)
+                .orElse(null);
+    }
+
+    // Mesma regra de resolverProcessoPaiVisivel, só que em lote — evita N+1 ao listar.
+    private Set<UUID> carregarIdsDeProcessoPaiVisiveis(List<DocumentoEntity> documentos) {
+        List<UUID> paisReferenciados = documentos.stream()
+                .map(DocumentoEntity::getProcessoPaiId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+
+        if (paisReferenciados.isEmpty()) {
+            return Set.of();
+        }
+
+        return documentoRepository.findAllById(paisReferenciados).stream()
+                .filter(pai -> !pai.isDeletado())
+                .map(DocumentoEntity::getId)
+                .collect(Collectors.toSet());
     }
 
     private Map<Long, String> carregarNomesCategorias(List<DocumentoEntity> documentos) {

@@ -76,7 +76,15 @@ public class EmbeddingConfig {
                                 "documento_id uuid",
                                 "versao integer",
                                 "titulo text",
-                                "secao text"
+                                "secao text",
+                                // Etapa 14 (RAG — B1): mesmas colunas da migration V14, aqui só para
+                                // um banco NOVO (createTable(true) já cria com elas desde o início;
+                                // num banco existente é a migration que faz o ALTER TABLE).
+                                "categoria_id bigint",
+                                "tipo_documento text",
+                                "status_ciclo_vida text",
+                                "macroprocesso_id bigint",
+                                "confidencialidade text"
                         ))
                         .indexes(List.of("documento_id"))
                         .build())

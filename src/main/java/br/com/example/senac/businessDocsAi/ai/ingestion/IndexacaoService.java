@@ -1,7 +1,9 @@
 package br.com.example.senac.businessDocsAi.ai.ingestion;
 
 import br.com.example.senac.businessDocsAi.document.entity.DocumentoEntity;
+import br.com.example.senac.businessDocsAi.document.entity.StatusCicloVida;
 import br.com.example.senac.businessDocsAi.document.entity.StatusIndexacao;
+import br.com.example.senac.businessDocsAi.document.entity.TipoDocumento;
 import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentSplitter;
@@ -102,8 +104,17 @@ public class IndexacaoService {
 
         List<TextSegment> segmentos = new ArrayList<>();
 
+        // Etapa 14 (A1): tipo complementa o prefixo título+seção que já existia — ajuda o
+        // retriever a distinguir um PROCESSO de uma POLITICA pelo texto, mesmo sem filtro.
+        // NAO_CLASSIFICADO (documento legado/sem metadado real) não teria valor nenhum
+        // nesse prefixo — tratado como "sem tipo", igual a null, em vez de poluir o texto
+        // (e o metadado, abaixo) com um rótulo que não distingue nada.
+        boolean temTipoReal = documento.getTipoDocumento() != null
+                && documento.getTipoDocumento() != TipoDocumento.NAO_CLASSIFICADO;
+        String tipoLegivel = temTipoReal ? documento.getTipoDocumento().name() + " " : "";
+
         for (HtmlSectionSplitter.Secao secao : secoes) {
-            String textoComContexto = documento.getTitulo() + " > " + secao.titulo() + "\n" + secao.texto();
+            String textoComContexto = tipoLegivel + documento.getTitulo() + " > " + secao.titulo() + "\n" + secao.texto();
 
             Document documentoLangchain = Document.from(textoComContexto);
 
@@ -113,6 +124,38 @@ public class IndexacaoService {
                         .put("versao", documento.getVersaoAtual())
                         .put("titulo", documento.getTitulo())
                         .put("secao", secao.ancora());
+
+                // Etapa 14/16: status_ciclo_vida é SEMPRE gravado (nunca omitido) — é o
+                // metadado que o pré-filtro da Etapa 16 usa; o langchain4j 1.18.0 não tem
+                // filtro IS NULL (B5), então "ausente" não é uma opção segura pra ele.
+                // Ausente no documento (legado/NAO_CLASSIFICADO) grava o valor EFETIVO
+                // "VIGENTE" (regra "vigente por padrão" — decisão 7/C4), nunca omite a chave.
+                //
+                // categoria_id — achado em produção (teste manual pós-Etapa-18, job de
+                // segurança): ao contrário do suposto, NÃO é garantidamente não-nulo —
+                // documento.categoria_id é nullable de verdade na tabela (a constraint
+                // NOT NULL que parecia garantir isso era de uma tabela legada homônima,
+                // "documentation", não "documento" — confirmado via V1__baseline_schema.sql
+                // vs. V6__add_categoria_a_documento_e_usuario.sql). Um documento sem
+                // categoria (existe pelo menos 1 em produção) travava a indexação inteira
+                // com NullPointerException. Tratado como os outros 3 metadados opcionais:
+                // omitido quando ausente, nunca usado no pré-filtro mesmo assim (só
+                // status_ciclo_vida entra nele).
+                if (documento.getCategoriaId() != null) {
+                    metadata.put("categoria_id", documento.getCategoriaId());
+                }
+                metadata.put("status_ciclo_vida", documento.isVigente()
+                        ? StatusCicloVida.VIGENTE.name()
+                        : documento.getStatusCicloVida().name());
+                if (temTipoReal) {
+                    metadata.put("tipo_documento", documento.getTipoDocumento().name());
+                }
+                if (documento.getMacroprocessoId() != null) {
+                    metadata.put("macroprocesso_id", documento.getMacroprocessoId());
+                }
+                if (documento.getConfidencialidade() != null) {
+                    metadata.put("confidencialidade", documento.getConfidencialidade().name());
+                }
 
                 segmentos.add(TextSegment.from(segmento.text(), metadata));
             }

@@ -12,6 +12,7 @@ import br.com.example.senac.businessDocsAi.document.entity.RascunhoDocumentoEnti
 import br.com.example.senac.businessDocsAi.document.entity.StatusRascunho;
 import br.com.example.senac.businessDocsAi.document.entity.TipoRascunho;
 import br.com.example.senac.businessDocsAi.document.repository.IRascunhoDocumentoRepository;
+import br.com.example.senac.businessDocsAi.document.service.DocumentoEstruturadoAplicadorService;
 import br.com.example.senac.businessDocsAi.document.service.DocumentoService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -47,6 +48,7 @@ public class DocumentoTools {
     private final IRascunhoDocumentoRepository rascunhoRepository;
     private final CategoryService categoryService;
     private final CategoriaAccessService categoriaAccessService;
+    private final DocumentoEstruturadoAplicadorService documentoEstruturadoAplicadorService;
 
     @Tool("""
             Lista as categorias que o usuário atual pode acessar. Use SEMPRE antes de \
@@ -100,6 +102,36 @@ public class DocumentoTools {
         return texto.toString();
     }
 
+    // Decisão ADMIN/OBSOLETO (2026-10-10): com a flag de ciclo de vida do RAG ligada,
+    // buscarDocumentos (acima) passa a esconder documentos não-VIGENTES por padrão, pra
+    // TODOS os papéis (inclusive ADMIN, alinhado com PesquisaService — achado na
+    // verificação V2). Esta tool é o caminho EXPLÍCITO de volta pro histórico completo —
+    // mesma regra de acesso por categoria de sempre, só pula o filtro de status. Com a
+    // flag desligada, idêntica a buscarDocumentos (nada a pular).
+    @Tool("""
+            Busca documentos INCLUINDO os que não estão mais vigentes (em elaboração, em \
+            revisão ou obsoletos) — use só quando o usuário pedir explicitamente por \
+            histórico, versões antigas, ou documentos descontinuados/obsoletos. Para busca \
+            normal, use buscarDocumentos.""")
+    public String buscarDocumentosIncluindoHistorico(@P("texto da busca, em linguagem natural") String consulta) {
+
+        var resultados = pesquisaService.buscar(consulta, true);
+
+        if (resultados.isEmpty()) {
+            return "Nenhum documento encontrado para essa busca (incluindo histórico/não-vigentes).";
+        }
+
+        StringBuilder texto = new StringBuilder();
+        for (ResultadoBuscaDTO resultado : resultados) {
+            texto.append("ID: ").append(resultado.documentoId())
+                    .append(" | Título: ").append(resultado.titulo())
+                    .append(" | Score: ").append(String.format("%.2f", resultado.melhorScore()))
+                    .append("\n");
+        }
+
+        return texto.toString();
+    }
+
     @Tool("""
             Prepara uma PROPOSTA de criação de um documento novo — NÃO cria nada ainda, só \
             grava um rascunho. Chame listarMinhasCategorias antes para saber o ID da \
@@ -127,12 +159,19 @@ public class DocumentoTools {
         // repete os passos de busca/preparo antes de confirmar de fato) — se isso resetasse
         // turnoCriacao, a proposta refeita nunca poderia ser confirmada no mesmo turno em
         // que foi "reproposta", mesmo já tendo passado por um turno anterior de verdade. Por
-        // isso: havendo rascunho pendente desta conversa, atualiza o conteúdo dele mas
-        // preserva o turnoCriacao original.
-        RascunhoDocumentoEntity rascunho = rascunhoRepository
-                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.PENDENTE)
-                .orElseGet(RascunhoDocumentoEntity::new);
+        // isso: havendo rascunho ATIVO desta conversa, atualiza o conteúdo dele mas
+        // preserva o turnoCriacao original (R1 — mesma regra de sempre, agora olhando os 3
+        // estados ativos, não só PENDENTE).
+        RascunhoDocumentoEntity existente = rascunhoRepository
+                .findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.ativos())
+                .orElse(null);
 
+        if (existente != null && existente.getStatus() == StatusRascunho.GERANDO) {
+            return "Já existe um documento sendo gerado nesta conversa. Aguarde terminar, ou "
+                    + "peça para descartar a proposta atual antes de pedir uma nova.";
+        }
+
+        RascunhoDocumentoEntity rascunho = existente != null ? existente : new RascunhoDocumentoEntity();
         boolean novo = rascunho.getId() == null;
 
         rascunho.setConversaId(contexto.conversaId());
@@ -141,7 +180,11 @@ public class DocumentoTools {
         rascunho.setCategoriaId(categoriaId);
         rascunho.setTitulo(titulo);
         rascunho.setConteudoHtml(conteudoHtml);
+        rascunho.setConteudoEstruturado(null);
+        rascunho.setVersaoSchema(null);
         rascunho.setStatus(StatusRascunho.PENDENTE);
+        rascunho.setErroGeracao(null);
+        rascunho.setTentativasGeracao(0);
         if (novo) {
             rascunho.setTurnoCriacao(contexto.turnoAtual());
             rascunho.setCriadoEm(LocalDateTime.now());
@@ -187,12 +230,18 @@ public class DocumentoTools {
 
         var contexto = ConversaContextHolder.atual();
 
-        // Ver prepararCriacaoDocumento: preserva o turnoCriacao de um rascunho pendente já
-        // existente desta conversa em vez de resetá-lo a cada "reproposta".
-        RascunhoDocumentoEntity rascunho = rascunhoRepository
-                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.PENDENTE)
-                .orElseGet(RascunhoDocumentoEntity::new);
+        // Ver prepararCriacaoDocumento: preserva o turnoCriacao de um rascunho ATIVO já
+        // existente desta conversa em vez de resetá-lo a cada "reproposta" (R1).
+        RascunhoDocumentoEntity existente = rascunhoRepository
+                .findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.ativos())
+                .orElse(null);
 
+        if (existente != null && existente.getStatus() == StatusRascunho.GERANDO) {
+            return "Já existe um documento sendo gerado nesta conversa. Aguarde terminar, ou "
+                    + "peça para descartar a proposta atual antes de pedir uma nova.";
+        }
+
+        RascunhoDocumentoEntity rascunho = existente != null ? existente : new RascunhoDocumentoEntity();
         boolean novo = rascunho.getId() == null;
 
         rascunho.setConversaId(contexto.conversaId());
@@ -201,7 +250,11 @@ public class DocumentoTools {
         rascunho.setCategoriaId(documentoAtual.categoriaId());
         rascunho.setTitulo(titulo);
         rascunho.setConteudoHtml(conteudoHtml);
+        rascunho.setConteudoEstruturado(null);
+        rascunho.setVersaoSchema(null);
         rascunho.setStatus(StatusRascunho.PENDENTE);
+        rascunho.setErroGeracao(null);
+        rascunho.setTentativasGeracao(0);
         if (novo) {
             rascunho.setTurnoCriacao(contexto.turnoAtual());
             rascunho.setCriadoEm(LocalDateTime.now());
@@ -228,13 +281,22 @@ public class DocumentoTools {
         var contexto = ConversaContextHolder.atual();
 
         Optional<RascunhoDocumentoEntity> rascunhoOpt = rascunhoRepository
-                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.PENDENTE);
+                .findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.ativos());
 
         if (rascunhoOpt.isEmpty()) {
             return "Não há nenhuma proposta pendente para confirmar nesta conversa.";
         }
 
         RascunhoDocumentoEntity rascunho = rascunhoOpt.get();
+
+        // R1: geração assíncrona em andamento ou que falhou nunca pode ser confirmada.
+        if (rascunho.getStatus() == StatusRascunho.GERANDO) {
+            return "O documento ainda está sendo gerado — aguarde terminar antes de confirmar.";
+        }
+        if (rascunho.getStatus() == StatusRascunho.ERRO_GERACAO) {
+            return "A geração deste documento falhou (" + rascunho.getErroGeracao() + "). Peça "
+                    + "para gerar de novo ou descarte a proposta.";
+        }
 
         if (rascunho.getTurnoCriacao().equals(contexto.turnoAtual())) {
             log.warn(
@@ -251,14 +313,24 @@ public class DocumentoTools {
             return "Você não tem mais acesso à categoria dessa proposta — ela não pôde ser confirmada.";
         }
 
-        DocumentoRequestDTO dto = new DocumentoRequestDTO(
-                rascunho.getTitulo(), rascunho.getConteudoHtml(), "Criado/atualizado via chat com IA",
-                rascunho.getCategoriaId()
-        );
+        // Decisão B3: um rascunho com conteudoEstruturado preenchido (veio do worker de
+        // geração assíncrona, Etapa 13.4) confirma pelo caminho que separa conteúdo de
+        // metadado; o legado (prepararCriacaoDocumento/...Atualizacao...) nunca preenche
+        // esse campo, então sempre cai no caminho de hoje, sem nenhuma mudança de
+        // comportamento para ele.
+        DocumentoResponseDTO documento;
+        if (rascunho.getConteudoEstruturado() != null) {
+            documento = documentoEstruturadoAplicadorService.aplicar(rascunho);
+        } else {
+            DocumentoRequestDTO dto = new DocumentoRequestDTO(
+                    rascunho.getTitulo(), rascunho.getConteudoHtml(), "Criado/atualizado via chat com IA",
+                    rascunho.getCategoriaId()
+            );
 
-        DocumentoResponseDTO documento = rascunho.getTipo() == TipoRascunho.CRIAR
-                ? documentoService.criar(dto)
-                : documentoService.atualizar(rascunho.getDocumentoIdAlvo(), dto);
+            documento = rascunho.getTipo() == TipoRascunho.CRIAR
+                    ? documentoService.criar(dto)
+                    : documentoService.atualizar(rascunho.getDocumentoIdAlvo(), dto);
+        }
 
         rascunho.setStatus(StatusRascunho.CONFIRMADO);
         rascunho.setConfirmadoEm(LocalDateTime.now());
@@ -270,21 +342,32 @@ public class DocumentoTools {
 
     @Tool("""
             Descarta a última proposta de criação/atualização pendente nesta conversa, caso \
-            o usuário decida explicitamente não seguir com ela. Nada é salvo como documento.""")
+            o usuário decida explicitamente não seguir com ela (inclusive uma que ainda \
+            esteja sendo gerada, ou que tenha falhado ao gerar). Nada é salvo como documento.""")
     public String descartarRascunhoPendente() {
 
         var contexto = ConversaContextHolder.atual();
 
         Optional<RascunhoDocumentoEntity> rascunhoOpt = rascunhoRepository
-                .findFirstByConversaIdAndStatusOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.PENDENTE);
+                .findFirstByConversaIdAndStatusInOrderByCriadoEmDesc(contexto.conversaId(), StatusRascunho.ativos());
 
         if (rascunhoOpt.isEmpty()) {
             return "Não há nenhuma proposta pendente para descartar nesta conversa.";
         }
 
-        RascunhoDocumentoEntity rascunho = rascunhoOpt.get();
-        rascunho.setStatus(StatusRascunho.DESCARTADO);
-        rascunhoRepository.save(rascunho);
+        // R1: um rascunho em GERANDO também pode ser descartado. UPDATE condicional só na
+        // coluna status (nunca um save() da entidade inteira, lida antes desta chamada) —
+        // se o worker terminar (finalizarComSucesso/finalizarComErro) ENTRE o findFirst
+        // acima e este descartar(), o resultado dele já está commitado com status != GERANDO
+        // e este UPDATE simplesmente não encontra mais a linha elegível (0 linhas afetadas,
+        // tratado abaixo); nunca reescreve/apaga titulo/conteudoHtml/conteudoEstruturado já
+        // gravados pelo worker, que é o bug que esta troca corrige (ver
+        // IRascunhoDocumentoRepositoryGeracaoAssincronaTest).
+        int descartados = rascunhoRepository.descartar(rascunhoOpt.get().getId(), StatusRascunho.ativos());
+        if (descartados == 0) {
+            return "Essa proposta não está mais ativa — talvez já tenha terminado de gerar ou já tenha "
+                    + "sido descartada. Confira o painel antes de tentar de novo.";
+        }
 
         return "Proposta descartada. Nada foi salvo.";
     }
