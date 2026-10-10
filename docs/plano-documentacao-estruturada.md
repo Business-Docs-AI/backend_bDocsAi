@@ -100,6 +100,15 @@ Nenhuma das duas foi escolhida ainda — decisão fica com o time, migração
 não começa antes disso (nem antes das Etapas 19/20 ficarem prontas,
 como já registrado acima).
 
+**Pendência visual conhecida (2026-10-10, achada na verificação manual
+do fix de Grid da tela de Documentação — ver "Correção pós-merge" em
+`feature/melhorias-em-todo-projeto` do frontend)**: os cards da tela de
+Documentação (`DocumentationPage.tsx`) ficaram grandes demais. Não
+corrigido agora — fica registrado para ser resolvido junto da migração
+Tailwind (C ou B', a decidir), já que mexer no tamanho dos cards hoje
+seria redesenho, fora do escopo da correção mínima de alinhamento já
+aplicada.
+
 ## Flags
 
 | Flag | Default | Controla |
