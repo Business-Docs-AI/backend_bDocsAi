@@ -125,14 +125,25 @@ public class IndexacaoService {
                         .put("titulo", documento.getTitulo())
                         .put("secao", secao.ancora());
 
-                // Etapa 14/16: categoria_id e status_ciclo_vida são SEMPRE gravados (nunca
-                // omitidos) — são os 2 metadados que o pré-filtro da Etapa 16 usa; o
-                // langchain4j 1.18.0 não tem filtro IS NULL (B5), então "ausente" não é uma
-                // opção segura para eles. status_ciclo_vida ausente no documento (legado/
-                // NAO_CLASSIFICADO) grava o valor EFETIVO "VIGENTE" (regra "vigente por
-                // padrão" — decisão 7/C4), nunca omite a chave. Os outros 3 metadados
-                // continuam opcionais (omitidos quando ausentes) — não entram no pré-filtro.
-                metadata.put("categoria_id", documento.getCategoriaId());
+                // Etapa 14/16: status_ciclo_vida é SEMPRE gravado (nunca omitido) — é o
+                // metadado que o pré-filtro da Etapa 16 usa; o langchain4j 1.18.0 não tem
+                // filtro IS NULL (B5), então "ausente" não é uma opção segura pra ele.
+                // Ausente no documento (legado/NAO_CLASSIFICADO) grava o valor EFETIVO
+                // "VIGENTE" (regra "vigente por padrão" — decisão 7/C4), nunca omite a chave.
+                //
+                // categoria_id — achado em produção (teste manual pós-Etapa-18, job de
+                // segurança): ao contrário do suposto, NÃO é garantidamente não-nulo —
+                // documento.categoria_id é nullable de verdade na tabela (a constraint
+                // NOT NULL que parecia garantir isso era de uma tabela legada homônima,
+                // "documentation", não "documento" — confirmado via V1__baseline_schema.sql
+                // vs. V6__add_categoria_a_documento_e_usuario.sql). Um documento sem
+                // categoria (existe pelo menos 1 em produção) travava a indexação inteira
+                // com NullPointerException. Tratado como os outros 3 metadados opcionais:
+                // omitido quando ausente, nunca usado no pré-filtro mesmo assim (só
+                // status_ciclo_vida entra nele).
+                if (documento.getCategoriaId() != null) {
+                    metadata.put("categoria_id", documento.getCategoriaId());
+                }
                 metadata.put("status_ciclo_vida", documento.isVigente()
                         ? StatusCicloVida.VIGENTE.name()
                         : documento.getStatusCicloVida().name());

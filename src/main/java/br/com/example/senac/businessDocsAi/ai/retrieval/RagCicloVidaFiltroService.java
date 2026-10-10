@@ -29,8 +29,13 @@ public class RagCicloVidaFiltroService {
 
     private static final Logger log = LoggerFactory.getLogger(RagCicloVidaFiltroService.class);
 
+    // Só status_ciclo_vida — categoria_id é legitimamente nulo pra documento sem categoria
+    // (achado em produção, ver IndexacaoService), não um indício de chunk órfão/nunca
+    // reindexado desde a Etapa 14. status_ciclo_vida, ao contrário, é SEMPRE gravado desde
+    // a Etapa 14/16 (com um valor efetivo, nunca omitido) — null nele é prova confiável de
+    // "nunca reindexado desde a Etapa 14".
     private static final String SQL_CHUNKS_SEM_METADADO =
-            "SELECT count(*) FROM documento_embedding WHERE status_ciclo_vida IS NULL OR categoria_id IS NULL";
+            "SELECT count(*) FROM documento_embedding WHERE status_ciclo_vida IS NULL";
 
     private final JdbcTemplate jdbcTemplate;
     private final boolean flagHabilitada;
@@ -63,8 +68,8 @@ public class RagCicloVidaFiltroService {
         return Optional.of(MetadataFilterBuilder.metadataKey("status_ciclo_vida").isEqualTo(StatusCicloVida.VIGENTE.name()));
     }
 
-    /** Quantos chunks ainda não têm status_ciclo_vida/categoria_id (nunca reindexados desde
-     * a Etapa 14) — exposto também pro endpoint ADMIN de status da reindexação. */
+    /** Quantos chunks ainda não têm status_ciclo_vida (nunca reindexados desde a Etapa 14)
+     * — exposto também pro endpoint ADMIN de status da reindexação. */
     public long chunksComMetadadoIncompleto() {
         Instant agora = Instant.now();
 
@@ -88,7 +93,7 @@ public class RagCicloVidaFiltroService {
         if (chunksSemMetadadoCache > 0) {
             log.warn(
                     "Pré-filtro de ciclo de vida do RAG DESLIGADO: {} chunk(s) sem "
-                            + "status_ciclo_vida/categoria_id (nunca reindexados desde a Etapa 14). "
+                            + "status_ciclo_vida (nunca reindexados desde a Etapa 14). "
                             + "Rode POST /admin/reindexacao para corrigir.",
                     chunksSemMetadadoCache
             );

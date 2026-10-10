@@ -216,12 +216,44 @@ class IndexacaoServiceTest {
         assertThat(segmento.metadata().getString("status_ciclo_vida")).isEqualTo("OBSOLETO");
     }
 
+    // Achado em produção (teste manual pós-Etapa-18, job de segurança): categoria_id NÃO é
+    // garantidamente não-nulo — a constraint NOT NULL que parecia garantir isso era de uma
+    // tabela legada homônima ("documentation"), não "documento" (V1 vs. V6 da migration).
+    // Existe pelo menos 1 documento real sem categoria, e isso travava a indexação inteira
+    // com NullPointerException. Nunca mais pode regredir.
+    @Test
+    void indexaNormalmenteDocumentoSemCategoriaOmitindoOMetadado() {
+        UUID id = UUID.randomUUID();
+        DocumentoEntity documento = documentoComVersao(id, 1);
+        documento.setCategoriaId(null);
+
+        when(documentoRepository.findById(id)).thenReturn(Optional.of(documento));
+        when(htmlSectionSplitter.dividir(anyString(), anyString()))
+                .thenReturn(List.of(new HtmlSectionSplitter.Secao("intro", "Introdução", "Texto de teste")));
+        when(embeddingModel.embedAll(anyList()))
+                .thenReturn(Response.from(List.of(Embedding.from(new float[]{0.1f, 0.2f}))));
+
+        indexacaoService.indexar(id, 1); // não pode lançar NullPointerException
+
+        assertThat(documento.getStatusIndexacao()).isEqualTo(StatusIndexacao.INDEXADO);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TextSegment>> segmentosCaptor = ArgumentCaptor.forClass(List.class);
+        verify(embeddingStore).addAll(anyList(), anyList(), segmentosCaptor.capture());
+
+        TextSegment segmento = segmentosCaptor.getValue().get(0);
+        assertThat(segmento.metadata().getLong("categoria_id")).isNull();
+        // status_ciclo_vida continua sempre gravado, mesmo sem categoria.
+        assertThat(segmento.metadata().getString("status_ciclo_vida")).isEqualTo("VIGENTE");
+    }
+
     private DocumentoEntity documentoComVersao(UUID id, int versaoAtual) {
         DocumentoEntity documento = new DocumentoEntity();
         documento.setId(id);
-        // categoria_id é NOT NULL no banco de verdade (V1__baseline_schema.sql) — sempre
-        // presente num DocumentoEntity real; o fixture precisa refletir isso (Etapa 14:
-        // IndexacaoService agora grava esse metadado sem checar null, por ser garantido).
+        // categoria_id costuma estar presente num documento real (atribuído no fluxo normal
+        // de criação), mas NÃO é garantido pelo banco (nullable de verdade — ver teste
+        // indexaNormalmenteDocumentoSemCategoriaOmitindoOMetadado) — default aqui só pra não
+        // obrigar todo teste existente a setar explicitamente.
         documento.setCategoriaId(1L);
         documento.setTitulo("Documento de Teste");
         documento.setConteudoHtml("<h1>Introdução</h1><p>Texto de teste</p>");
