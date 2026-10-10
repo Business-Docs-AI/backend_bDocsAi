@@ -1,8 +1,8 @@
 # PR: Documentação Estruturada (pirâmide ISO 9001 / SIPOC / RACI / APQC)
 
 Branch: `feature/documentacao-estruturada` → `feature/melhorias-em-todo-projeto`
-(decisão 2026-10-10 — ver "Base do PR" abaixo). **PR ainda NÃO aberto** —
-só a descrição está preparada aqui.
+(decisão 2026-10-10 — ver "Base do PR" abaixo). **Aberto como DRAFT**
+(2026-10-10).
 
 ## Base do PR (decisão 2026-10-10)
 
