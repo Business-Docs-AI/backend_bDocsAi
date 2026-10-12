@@ -366,6 +366,11 @@ Docker Compose
 
 O ambiente de desenvolvimento utiliza Docker para padronizar a execução do projeto.
 
+Pré-requisitos: apenas Docker e Docker Compose. Não é necessário ter Java/Gradle
+instalados na máquina — o backend é compilado dentro do próprio container (imagem
+multi-stage: a 1ª etapa builda o jar com o Gradle Wrapper em uma imagem JDK 25, a 2ª
+etapa roda só o jar resultante numa imagem JRE 25).
+
 Os principais serviços são:
 
 Docker
@@ -383,6 +388,10 @@ O ambiente atual utiliza o profile:
 dev
 
 Para iniciar o projeto pela primeira vez:
+
+1. Copie `.env.example` para `.env` e preencha as variáveis (veja a seção
+   "🔑 Variáveis de Ambiente" abaixo).
+2. Suba o ambiente:
 
 docker compose up --build
 
