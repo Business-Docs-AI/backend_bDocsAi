@@ -594,6 +594,12 @@ Documentação Viva
 
 permite centralizar o conhecimento da organização, facilitar sua manutenção e possibilitar que colaboradores encontrem informações de forma rápida e contextualizada.
 
+📚 Documentação Técnica
+
+Documentação técnica da camada de IA do backend (RAG, embeddings, chat com ferramentas,
+geração de documentação estruturada), para o time se localizar no código:
+[`docs/ia/README.md`](docs/ia/README.md).
+
 📄 Status do Projeto
 
 Status: Em desenvolvimento — MVP
