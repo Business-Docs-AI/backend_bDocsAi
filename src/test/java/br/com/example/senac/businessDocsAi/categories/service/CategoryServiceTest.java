@@ -3,6 +3,10 @@ package br.com.example.senac.businessDocsAi.categories.service;
 import br.com.example.senac.businessDocsAi.categories.dto.CategoryResponseDTO;
 import br.com.example.senac.businessDocsAi.categories.entity.CategoryEntity;
 import br.com.example.senac.businessDocsAi.categories.repository.ICategoryRepository;
+import br.com.example.senac.businessDocsAi.categories.repository.IUsuarioCategoriaRepository;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoAreaParticipanteRepository;
+import br.com.example.senac.businessDocsAi.document.repository.IDocumentoRepository;
+import br.com.example.senac.businessDocsAi.exception.BadRequestException;
 import br.com.example.senac.businessDocsAi.exception.NotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +21,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -34,11 +40,26 @@ class CategoryServiceTest {
     @Mock
     private CategoriaAccessService categoriaAccessService;
 
+    @Mock
+    private IDocumentoRepository documentoRepository;
+
+    @Mock
+    private IUsuarioCategoriaRepository usuarioCategoriaRepository;
+
+    @Mock
+    private IDocumentoAreaParticipanteRepository documentoAreaParticipanteRepository;
+
     private CategoryService categoryService;
 
     @BeforeEach
     void setUp() {
-        categoryService = new CategoryService(repository, categoriaAccessService);
+        categoryService = new CategoryService(
+                repository,
+                categoriaAccessService,
+                documentoRepository,
+                usuarioCategoriaRepository,
+                documentoAreaParticipanteRepository
+        );
     }
 
     @Test
@@ -88,6 +109,56 @@ class CategoryServiceTest {
 
         assertThatThrownBy(() -> categoryService.findById(99L))
                 .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void deleteLancaNotFoundQuandoCategoriaNaoExiste() {
+        when(repository.existsById(99L)).thenReturn(false);
+
+        assertThatThrownBy(() -> categoryService.delete(99L))
+                .isInstanceOf(NotFoundException.class);
+
+        verifyNoInteractions(documentoRepository, usuarioCategoriaRepository, documentoAreaParticipanteRepository);
+    }
+
+    @Test
+    void deleteRemoveCategoriaQuandoNaoHaVinculos() {
+        when(repository.existsById(1L)).thenReturn(true);
+        when(documentoRepository.countByCategoriaId(1L)).thenReturn(0L);
+        when(usuarioCategoriaRepository.countByCategoriaId(1L)).thenReturn(0L);
+        when(documentoAreaParticipanteRepository.countByCategoriaId(1L)).thenReturn(0L);
+
+        categoryService.delete(1L);
+
+        verify(repository).deleteById(1L);
+    }
+
+    @Test
+    void deleteLancaBadRequestQuandoHaDocumentoVinculado() {
+        when(repository.existsById(1L)).thenReturn(true);
+        when(documentoRepository.countByCategoriaId(1L)).thenReturn(2L);
+        when(usuarioCategoriaRepository.countByCategoriaId(1L)).thenReturn(0L);
+        when(documentoAreaParticipanteRepository.countByCategoriaId(1L)).thenReturn(0L);
+
+        assertThatThrownBy(() -> categoryService.delete(1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("2 documento(s)");
+
+        verify(repository, org.mockito.Mockito.never()).deleteById(1L);
+    }
+
+    @Test
+    void deleteLancaBadRequestQuandoHaUsuarioVinculado() {
+        when(repository.existsById(1L)).thenReturn(true);
+        when(documentoRepository.countByCategoriaId(1L)).thenReturn(0L);
+        when(usuarioCategoriaRepository.countByCategoriaId(1L)).thenReturn(1L);
+        when(documentoAreaParticipanteRepository.countByCategoriaId(1L)).thenReturn(0L);
+
+        assertThatThrownBy(() -> categoryService.delete(1L))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("1 usuário(s)");
+
+        verify(repository, org.mockito.Mockito.never()).deleteById(1L);
     }
 
     private CategoryEntity categoria(Long id, String nome) {

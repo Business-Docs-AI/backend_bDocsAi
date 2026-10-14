@@ -15,4 +15,6 @@ public interface IUsuarioCategoriaRepository extends JpaRepository<UsuarioCatego
     Set<Long> findCategoriaIdsByUsuarioId(Long usuarioId);
 
     void deleteByUsuarioId(Long usuarioId);
+
+    long countByCategoriaId(Long categoriaId);
 }

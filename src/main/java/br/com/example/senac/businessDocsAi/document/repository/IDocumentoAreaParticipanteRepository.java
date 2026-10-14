@@ -11,4 +11,6 @@ public interface IDocumentoAreaParticipanteRepository extends JpaRepository<Docu
     List<DocumentoAreaParticipanteEntity> findByDocumentoId(UUID documentoId);
 
     void deleteByDocumentoId(UUID documentoId);
+
+    long countByCategoriaId(Long categoriaId);
 }
