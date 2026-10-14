@@ -166,6 +166,7 @@ public class UserService {
     private void salvarCategoriasDoUsuario(Long usuarioId, List<Long> categoriaIds) {
 
         usuarioCategoriaRepository.deleteByUsuarioId(usuarioId);
+        usuarioCategoriaRepository.flush();
 
         if (categoriaIds == null || categoriaIds.isEmpty()) {
             return;
